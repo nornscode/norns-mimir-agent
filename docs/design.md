@@ -33,12 +33,12 @@ The worker handles two types of tasks from norns:
 
 ### Sending messages to the agent
 
-The norns Python SDK currently only supports the **worker** role (receiving tasks). Mimir also needs to **send messages** to the agent (e.g., when a Slack message arrives). This requires either:
+The norns Python SDK now supports both roles:
 
-- **Option A:** Add REST client methods to the norns SDK (`norns.send_message(agent_id, content)`)
-- **Option B:** Use `httpx` directly in Mimir to call the norns REST API
+- **`Norns`** worker runtime (receives `llm_task` / `tool_task`)
+- **`NornsClient`** REST/WebSocket client (send messages, query runs, inspect events)
 
-**Decision: TBD** — leaning toward Option A for cleanliness, Option B for speed.
+Mimir should use `NornsClient` for inbound integrations (Slack/API) and keep direct `httpx` calls as a fallback only if a required API surface is missing.
 
 ## Knowledge Sources
 
@@ -74,6 +74,7 @@ The norns Python SDK currently only supports the **worker** role (receiving task
 
 This design is in progress. Open questions:
 - Ingestion strategy (RAG vs live fetch vs hybrid)
-- SDK enhancement vs direct REST calls for message sending
 - Storage backend for `/remember` command data
 - Authentication model for GitHub and Google Drive integrations
+
+See `docs/v0-plan.md` for the initial implementation plan.
