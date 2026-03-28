@@ -33,12 +33,12 @@ The worker handles two types of tasks from norns:
 
 ### Sending messages to the agent
 
-The norns Python SDK now supports both roles:
+The norns Python SDK supports both roles:
 
-- **`Norns`** worker runtime (receives `llm_task` / `tool_task`)
-- **`NornsClient`** REST/WebSocket client (send messages, query runs, inspect events)
+- **`Norns`** (worker) — connects via WebSocket, registers agent + tools, handles `llm_task` / `tool_task` dispatches
+- **`NornsClient`** (client) — sends messages, queries runs/events, streams via WebSocket
 
-Mimir should use `NornsClient` for inbound integrations (Slack/API) and keep direct `httpx` calls as a fallback only if a required API surface is missing.
+Mimir uses `NornsClient` for inbound integrations (Slack, CLI, API) to send messages and poll for results.
 
 ## Knowledge Sources
 
@@ -72,9 +72,9 @@ Mimir should use `NornsClient` for inbound integrations (Slack/API) and keep dir
 
 ## Status
 
-This design is in progress. Open questions:
-- Ingestion strategy (RAG vs live fetch vs hybrid)
+Design complete for v0 scope. Open questions for future iterations:
+- Ingestion strategy (RAG vs live fetch vs hybrid) for large corpora
 - Storage backend for `/remember` command data
 - Authentication model for GitHub and Google Drive integrations
 
-See `docs/v0-plan.md` for the initial implementation plan.
+See [v0-plan.md](v0-plan.md) for the implementation plan.
