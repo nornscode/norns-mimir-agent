@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mimir
+      POSTGRES_PASSWORD: mimir
+      POSTGRES_DB: mimir
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  mimir:
+    build:
+      context: ..
+      dockerfile: mimir/Dockerfile
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://mimir:mimir@db:5432/mimir
+      NORNS_URL: http://host.docker.internal:4001
+
+volumes:
+  pgdata:

@@ -1,0 +1,61 @@
+import asyncio
+import logging
+import threading
+import uuid
+
+from norns.client import Norns
+
+from mimir import config, db
+from mimir.worker import agent
+from mimir.discord_bot import bot
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+logger = logging.getLogger("mimir")
+
+
+async def run_worker():
+    norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
+    norns._ensure_agent(agent)
+    wid = f"python-worker-{uuid.uuid4().hex[:8]}"
+    await norns._run_loop(agent, wid)
+
+
+async def run_discord():
+    if not config.DISCORD_BOT_TOKEN:
+        logger.info("DISCORD_BOT_TOKEN not set, skipping Discord bot")
+        return
+    await bot.start(config.DISCORD_BOT_TOKEN)
+
+
+def run_slack():
+    try:
+        if not config.SLACK_BOT_TOKEN or not config.SLACK_APP_TOKEN:
+            logger.info("SLACK_BOT_TOKEN/SLACK_APP_TOKEN not set, skipping Slack bot")
+            return
+
+        from slack_bolt.adapter.socket_mode import SocketModeHandler
+        from mimir.slack_bot import app
+
+        logger.info("Starting Slack bot")
+        handler = SocketModeHandler(app, config.SLACK_APP_TOKEN)
+        handler.start()
+    except Exception as e:
+        logger.error(f"Slack bot failed to start: {e}", exc_info=True)
+
+
+async def main_async():
+    db.init()
+
+    # Slack Bolt runs its own threads, so start it in a background thread
+    slack_thread = threading.Thread(target=run_slack, daemon=True)
+    slack_thread.start()
+
+    await asyncio.gather(run_worker(), run_discord())
+
+
+def main():
+    asyncio.run(main_async())
+
+
+if __name__ == "__main__":
+    main()

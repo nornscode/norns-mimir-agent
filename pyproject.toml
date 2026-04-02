@@ -11,11 +11,15 @@ dependencies = [
     "google-api-python-client>=2.100",
     "google-auth-httplib2>=0.2",
     "google-auth-oauthlib>=1.2",
+    "psycopg2-binary>=2.9",
+    "slack-bolt>=1.18",
 ]
 
 [project.scripts]
+mimir = "mimir.main:main"
 mimir-worker = "mimir.worker:main"
 mimir-discord = "mimir.discord_bot:main"
+mimir-slack = "mimir.slack_bot:main"
 
 [build-system]
 requires = ["hatchling"]

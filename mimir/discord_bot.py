@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 
@@ -55,12 +56,16 @@ async def on_message(message: discord.Message):
         pass
 
     try:
-        result = norns_client.send_message(
-            "mimir",
-            text,
-            conversation_key=conversation_key,
-            wait=True,
-            timeout=120,
+        # Run in thread to avoid blocking the asyncio event loop
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: norns_client.send_message(
+                "mimir",
+                text,
+                conversation_key=conversation_key,
+                wait=True,
+                timeout=120,
+            ),
         )
 
         # Remove thinking reaction
