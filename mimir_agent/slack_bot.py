@@ -97,8 +97,10 @@ def _handle(body, say, client):
         except Exception:
             pass
 
-        if result.status == "completed" and result.output:
+        if result.output:
             say(text=result.output, thread_ts=thread_ts)
+        elif result.status == "completed":
+            say(text="Done — but I didn't have anything to add beyond what I found.", thread_ts=thread_ts)
         else:
             say(text=f"Sorry, something went wrong (status: {result.status}).", thread_ts=thread_ts)
 

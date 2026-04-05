@@ -20,5 +20,13 @@ GITHUB_REPOS = [r.strip() for r in os.environ.get("GITHUB_REPOS", "").split(",")
 GOOGLE_CREDENTIALS_PATH = os.environ.get("GOOGLE_CREDENTIALS_PATH", "")
 GOOGLE_DOC_IDS = [d.strip() for d in os.environ.get("GOOGLE_DOC_IDS", "").split(",") if d.strip()]
 
+# Embeddings (local)
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "384"))
+
+# Figma
+FIGMA_ACCESS_TOKEN = os.environ.get("FIGMA_ACCESS_TOKEN", "")
+FIGMA_FILE_KEYS = [k.strip() for k in os.environ.get("FIGMA_FILE_KEYS", "").split(",") if k.strip()]
+
 # Database
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/mimir_agent")
