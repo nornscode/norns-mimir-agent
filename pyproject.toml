@@ -1,7 +1,7 @@
 [project]
 name = "mimir-agent"
 version = "0.1.0"
-description = "AI Agent for product knowledge built on Norns."
+description = "Product knowledge agent built on Norns durable runtime."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
