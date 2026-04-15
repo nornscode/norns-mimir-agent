@@ -16,6 +16,36 @@ norns_client = NornsClient(config.NORNS_URL, api_key=config.NORNS_API_KEY)
 _bot_user_id: str | None = None
 
 
+def to_slack_mrkdwn(text: str) -> str:
+    """Convert common Markdown patterns to Slack mrkdwn.
+
+    Slack supports *bold* and _italic_, not Markdown **bold**.
+    """
+    if not text:
+        return text
+
+    out = text
+
+    # Convert links: [text](url) -> <url|text>
+    out = re.sub(r"\[([^\]]+)\]\((https?://[^\)]+)\)", r"<\2|\1>", out)
+
+    # Convert headings to bold lines
+    out = re.sub(r"(?m)^\s*#{1,6}\s+(.+)$", r"*\1*", out)
+
+    # Convert markdown bold/italic to Slack style
+    out = re.sub(r"\*\*(.+?)\*\*", r"*\1*", out)
+    out = re.sub(r"__(.+?)__", r"*\1*", out)
+    out = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"_\1_", out)
+
+    # Normalize list bullets to a cleaner glyph
+    out = re.sub(r"(?m)^\s*[-*]\s+", "• ", out)
+
+    # Keep output readable in Slack mobile
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+
+    return out
+
+
 def handle_mention(body, say, client):
     """Handle @mentions — always respond."""
     _handle(body, say, client)
@@ -98,7 +128,7 @@ def _handle(body, say, client):
             pass
 
         if result.output:
-            say(text=result.output, thread_ts=thread_ts)
+            say(text=to_slack_mrkdwn(result.output), thread_ts=thread_ts)
         elif result.status == "completed":
             say(text="Done — but I didn't have anything to add beyond what I found.", thread_ts=thread_ts)
         else:
