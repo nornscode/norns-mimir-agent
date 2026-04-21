@@ -6,7 +6,8 @@ import uuid
 from norns.client import Norns
 
 from mimir_agent import config, db
-from mimir_agent.worker import agent
+from mimir_agent.worker import _build_system_prompt
+from mimir_agent.tools import all_tools
 from mimir_agent.discord_bot import bot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -14,6 +15,16 @@ logger = logging.getLogger("mimir_agent")
 
 
 async def run_worker():
+    from norns import Agent
+    agent = Agent(
+        name="mimir-agent",
+        model="claude-sonnet-4-20250514",
+        system_prompt=_build_system_prompt(),
+        tools=all_tools,
+        mode="conversation",
+        max_steps=40,
+        on_failure="retry_last_step",
+    )
     norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
     norns._ensure_agent(agent)
     wid = f"python-worker-{uuid.uuid4().hex[:8]}"

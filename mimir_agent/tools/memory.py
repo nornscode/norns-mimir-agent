@@ -1,6 +1,6 @@
 from norns import tool
 
-from mimir_agent import db
+from mimir_agent import config, db
 from mimir_agent.embeddings import get_embedding
 
 
@@ -23,3 +23,12 @@ def search_memory(query: str) -> str:
         f"[{key}] (relevance: {similarity:.2f}) {content}"
         for key, content, similarity in results
     )
+
+
+@tool(side_effect=True)
+def reset_memory() -> str:
+    """Reset all stored memories. Only available in dev mode."""
+    if not config.DEV_MODE:
+        return "Reset is only available in dev mode."
+    count = db.clear_memories()
+    return f"Cleared {count} memories."

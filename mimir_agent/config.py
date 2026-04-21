@@ -28,5 +28,8 @@ EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "384"))
 FIGMA_ACCESS_TOKEN = os.environ.get("FIGMA_ACCESS_TOKEN", "")
 FIGMA_FILE_KEYS = [k.strip() for k in os.environ.get("FIGMA_FILE_KEYS", "").split(",") if k.strip()]
 
+# Runtime
+DEV_MODE = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")
+
 # Database
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/mimir_agent")
