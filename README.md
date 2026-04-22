@@ -1,6 +1,6 @@
 # norns-mimir-agent
 
-Mimir is a product-knowledge agent built on [Norns](https://github.com/amackera/norns).
+Mimir is a product-knowledge agent built on [Norns](https://github.com/nornscode/norns).
 
 It runs as a Norns worker and can answer questions using:
 - GitHub repos
