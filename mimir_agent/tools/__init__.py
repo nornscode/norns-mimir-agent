@@ -1,4 +1,3 @@
-from mimir_agent.tools.figma import render_figma_frame, search_figma
 from mimir_agent.tools.github import (
     list_github_branches,
     list_github_commits,
@@ -7,7 +6,6 @@ from mimir_agent.tools.github import (
     read_github_pr,
     search_github,
 )
-from mimir_agent.tools.google_docs import read_google_doc, search_google_docs
 from mimir_agent.tools.memory import remember, reset_memory, search_memory
 from mimir_agent.tools.release_notes import draft_release_notes
 from mimir_agent.tools.sources import connect_source, disconnect_source, list_sources
@@ -23,10 +21,6 @@ all_tools = [
     list_github_prs,
     read_github_pr,
     list_github_branches,
-    search_google_docs,
-    read_google_doc,
-    search_figma,
-    render_figma_frame,
     draft_release_notes,
     read_url,
     connect_source,

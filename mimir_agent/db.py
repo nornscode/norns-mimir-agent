@@ -62,31 +62,18 @@ def init():
                 type TEXT NOT NULL,
                 identifier TEXT NOT NULL,
                 label TEXT,
+                is_default BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE (type, identifier)
             )
         """)
-
-    with conn.cursor() as cur:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS eval_records (
-                id SERIAL PRIMARY KEY,
-                thread_ref TEXT NOT NULL UNIQUE,
-                channel TEXT NOT NULL,
-                question TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                asker TEXT NOT NULL,
-                outcome TEXT,
-                evidence TEXT,
-                confidence REAL,
-                feedback TEXT,
-                feedback_at TIMESTAMPTZ,
-                classified_at TIMESTAMPTZ,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
+            ALTER TABLE sources
+            ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE
         """)
 
     _backfill_embeddings()
+    _seed_default_sources()
     _seed_sources_from_config()
 
 
@@ -163,60 +150,84 @@ def search_memories(query_embedding: list[float], limit: int = 10) -> list[tuple
 
 # --- Sources ---
 
+def _seed_default_sources():
+    """Seed the always-on default sources (public repos shipped with every install)."""
+    for source_type, identifier, label in config.DEFAULT_SOURCES:
+        add_source(source_type, identifier, label=label, is_default=True)
+
+
 def _seed_sources_from_config():
     """Seed sources table from env vars on first boot (won't duplicate)."""
     for repo in config.GITHUB_REPOS:
         add_source("github_repo", repo)
-    for doc_id in config.GOOGLE_DOC_IDS:
-        add_source("google_doc", doc_id)
-    for key in config.FIGMA_FILE_KEYS:
-        add_source("figma_file", key)
 
 
-def add_source(source_type: str, identifier: str, label: str | None = None) -> bool:
+def add_source(
+    source_type: str,
+    identifier: str,
+    label: str | None = None,
+    is_default: bool = False,
+) -> bool:
     """Add a connected source. Returns True if added, False if already exists."""
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO sources (type, identifier, label)
-            VALUES (%s, %s, %s)
+            INSERT INTO sources (type, identifier, label, is_default)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (type, identifier) DO NOTHING
             """,
-            (source_type, identifier, label),
+            (source_type, identifier, label, is_default),
         )
         return cur.rowcount > 0
 
 
 def remove_source(source_type: str, identifier: str) -> bool:
-    """Remove a connected source. Returns True if removed."""
+    """Remove a connected source. Default sources cannot be removed."""
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM sources WHERE type = %s AND identifier = %s",
+            "DELETE FROM sources WHERE type = %s AND identifier = %s AND is_default = FALSE",
             (source_type, identifier),
         )
         return cur.rowcount > 0
 
 
-def list_sources(source_type: str | None = None) -> list[tuple[str, str, str | None]]:
-    """List connected sources, optionally filtered by type."""
+def list_sources(
+    source_type: str | None = None,
+    user_only: bool = False,
+) -> list[tuple[str, str, str | None, bool]]:
+    """List connected sources. Each row: (type, identifier, label, is_default)."""
     conn = _get_conn()
+    clauses = []
+    params: list = []
+    if source_type:
+        clauses.append("type = %s")
+        params.append(source_type)
+    if user_only:
+        clauses.append("is_default = FALSE")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor() as cur:
-        if source_type:
-            cur.execute(
-                "SELECT type, identifier, label FROM sources WHERE type = %s ORDER BY identifier",
-                (source_type,),
-            )
-        else:
-            cur.execute("SELECT type, identifier, label FROM sources ORDER BY type, identifier")
+        cur.execute(
+            f"SELECT type, identifier, label, is_default FROM sources {where} "
+            "ORDER BY is_default DESC, type, identifier",
+            params,
+        )
         return cur.fetchall()
 
 
+def user_source_count() -> int:
+    """Count sources the user has registered (excludes always-on defaults)."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM sources WHERE is_default = FALSE")
+        return cur.fetchone()[0]
+
+
 def get_github_repos() -> list[str]:
-    """Get all connected GitHub repos (from DB + config)."""
+    """Get all connected GitHub repos (defaults + user + env config)."""
     repos = set(config.GITHUB_REPOS)
-    for _, identifier, _ in list_sources("github_repo"):
+    for _, identifier, _, _ in list_sources("github_repo"):
         repos.add(identifier)
     return sorted(repos)
 
@@ -230,10 +241,10 @@ def clear_memories() -> int:
 
 
 def clear_sources() -> int:
-    """Delete all sources. Returns count of deleted rows."""
+    """Delete user-registered sources (defaults are preserved and re-seeded)."""
     conn = _get_conn()
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM sources")
+        cur.execute("DELETE FROM sources WHERE is_default = FALSE")
         count = cur.rowcount
     _seed_sources_from_config()
     return count
@@ -244,96 +255,3 @@ def memory_count() -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM memories")
         return cur.fetchone()[0]
-
-
-# --- Eval records ---
-
-def create_eval_record(thread_ref: str, channel: str, question: str, answer: str, asker: str) -> int:
-    """Create an eval record for a thread. Returns the record ID."""
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO eval_records (thread_ref, channel, question, answer, asker)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (thread_ref) DO UPDATE
-                SET question = %s, answer = %s
-            RETURNING id
-            """,
-            (thread_ref, channel, question, answer, asker, question, answer),
-        )
-        return cur.fetchone()[0]
-
-
-def classify_eval_record(thread_ref: str, outcome: str, evidence: str, confidence: float) -> None:
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE eval_records
-            SET outcome = %s, evidence = %s, confidence = %s, classified_at = NOW()
-            WHERE thread_ref = %s
-            """,
-            (outcome, evidence, confidence, thread_ref),
-        )
-
-
-def record_feedback(thread_ref: str, feedback: str) -> None:
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE eval_records
-            SET feedback = %s, feedback_at = NOW()
-            WHERE thread_ref = %s
-            """,
-            (feedback, thread_ref),
-        )
-
-
-def get_eval_record(thread_ref: str) -> dict | None:
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM eval_records WHERE thread_ref = %s",
-            (thread_ref,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
-        cols = [desc[0] for desc in cur.description]
-        return dict(zip(cols, row))
-
-
-def get_unclassified_records(limit: int = 50) -> list[dict]:
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM eval_records
-            WHERE classified_at IS NULL
-            ORDER BY created_at ASC
-            LIMIT %s
-            """,
-            (limit,),
-        )
-        cols = [desc[0] for desc in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
-def get_feedback_candidates(limit: int = 10) -> list[dict]:
-    """Get classified records eligible for solicited feedback (no feedback yet)."""
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM eval_records
-            WHERE classified_at IS NOT NULL
-              AND feedback IS NULL
-            ORDER BY classified_at ASC
-            LIMIT %s
-            """,
-            (limit,),
-        )
-        cols = [desc[0] for desc in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]

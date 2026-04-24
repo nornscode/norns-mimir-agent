@@ -11,9 +11,7 @@ services:
       - "5433:5432"
 
   mimir-agent:
-    build:
-      context: ..
-      dockerfile: norns-mimir-agent/Dockerfile
+    build: .
     volumes:
       - ./:/app
       - /app/.venv

@@ -8,7 +8,6 @@ from norns.client import Norns
 from mimir_agent import config, db
 from mimir_agent.worker import _build_system_prompt
 from mimir_agent.tools import all_tools
-from mimir_agent.discord_bot import bot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("mimir_agent")
@@ -31,13 +30,6 @@ async def run_worker():
     await norns._run_loop(agent, wid)
 
 
-async def run_discord():
-    if not config.DISCORD_BOT_TOKEN:
-        logger.info("DISCORD_BOT_TOKEN not set, skipping Discord bot")
-        return
-    await bot.start(config.DISCORD_BOT_TOKEN)
-
-
 def run_slack():
     try:
         if not config.SLACK_BOT_TOKEN or not config.SLACK_APP_TOKEN:
@@ -54,18 +46,14 @@ def run_slack():
         logger.error(f"Slack bot failed to start: {e}", exc_info=True)
 
 
-async def main_async():
+def main():
     db.init()
 
     # Slack Bolt runs its own threads, so start it in a background thread
     slack_thread = threading.Thread(target=run_slack, daemon=True)
     slack_thread.start()
 
-    await asyncio.gather(run_worker(), run_discord())
-
-
-def main():
-    asyncio.run(main_async())
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":

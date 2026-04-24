@@ -4,12 +4,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy SDK so ../norns-sdk-python resolves to /norns-sdk-python
-COPY norns-sdk-python/ /norns-sdk-python/
+# Install dependencies (cached layer — only invalidates when lockfile changes)
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
 
-# Install dependencies only (source is bind-mounted at runtime)
-COPY norns-mimir-agent/pyproject.toml norns-mimir-agent/uv.lock norns-mimir-agent/README.md ./
-RUN uv sync --frozen --no-install-project
+# Copy source and install the project
+COPY mimir_agent/ ./mimir_agent/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
