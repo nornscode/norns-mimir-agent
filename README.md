@@ -158,6 +158,7 @@ Conversations are keyed by Slack channel + thread, so threads are independent co
 ## Docs
 
 - [`docs/design.md`](docs/design.md) — architecture, runtime model, tool surface
+- [`docs/deploy-fly.md`](docs/deploy-fly.md) — reference deploy on Fly.io
 
 ## License
 
