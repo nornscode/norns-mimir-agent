@@ -76,9 +76,9 @@ class TestConnectSource:
 class TestListSourcesTool:
     def test_groups_defaults_and_user(self):
         fake_rows = [
-            ("github_repo", "nornscode/norns", "Norns", True),
-            ("github_repo", "acme/product", None, False),
-            ("url", "https://example.com", None, False),
+            ("github_repo", "nornscode/norns", "Norns", True, "default"),
+            ("github_repo", "acme/product", None, False, "default"),
+            ("url", "https://example.com", None, False, "default"),
         ]
         with patch("mimir_agent.tools.sources.db") as mock_db:
             mock_db.list_sources.return_value = fake_rows
@@ -91,7 +91,7 @@ class TestListSourcesTool:
         assert "https://example.com" in out
 
     def test_only_defaults_shows_no_user_message(self):
-        fake_rows = [("github_repo", "nornscode/norns", None, True)]
+        fake_rows = [("github_repo", "nornscode/norns", None, True, "default")]
         with patch("mimir_agent.tools.sources.db") as mock_db:
             mock_db.list_sources.return_value = fake_rows
             from mimir_agent.tools.sources import list_sources

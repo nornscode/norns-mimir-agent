@@ -85,24 +85,27 @@ def _ingest_figma_file(identifier: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _remember_github_repo(identifier: str) -> None:
+def _remember_github_repo(identifier: str, project: str = "default") -> None:
     """Mirror a connected repo into memory so search_memory can surface it across threads."""
     from mimir_agent.tools.memory import remember
 
     remember.handler(
         key=f"github_repo:{identifier}",
         content=f"User connected GitHub repo: https://github.com/{identifier}",
+        project=project,
     )
 
 
 @tool(side_effect=True)
-def connect_source(source_type: str, identifier: str, label: str = "") -> str:
-    """Register a knowledge source. Validates access before adding.
+def connect_source(source_type: str, identifier: str, label: str = "", project: str = "default") -> str:
+    """Register a knowledge source for a project. Validates access before adding.
 
     Types:
     - github_repo: owner/repo format (e.g. "nornscode/norns")
     - url: any web URL (its content is fetched and stored in memory)
     - figma_file: a Figma file URL or bare file key (text content stored in memory)
+
+    The project parameter scopes the source. Defaults to the current project.
     """
     if source_type not in VALID_TYPES:
         return (
@@ -129,20 +132,20 @@ def connect_source(source_type: str, identifier: str, label: str = "") -> str:
     if not ok:
         return err
 
-    added = db.add_source(source_type, identifier, label=label or None)
+    added = db.add_source(source_type, identifier, label=label or None, project=project)
     if source_type == "github_repo":
-        _remember_github_repo(identifier)
+        _remember_github_repo(identifier, project=project)
     if added:
-        return f"Connected {source_type}: {identifier}"
+        return f"Connected {source_type}: {identifier} (project: {project})"
     return f"Already connected: {source_type} {identifier}"
 
 
 @tool(side_effect=True)
-def disconnect_source(source_type: str, identifier: str) -> str:
+def disconnect_source(source_type: str, identifier: str, project: str = "default") -> str:
     """Disconnect a user-registered knowledge source. Default sources cannot be removed."""
-    removed = db.remove_source(source_type, identifier)
+    removed = db.remove_source(source_type, identifier, project=project)
     if removed:
-        return f"Disconnected {source_type}: {identifier}"
+        return f"Disconnected {source_type}: {identifier} (project: {project})"
     return f"Not found (or is a default and cannot be removed): {source_type} {identifier}"
 
 
@@ -162,17 +165,19 @@ def installation_status() -> str:
 
 
 @tool
-def list_sources() -> str:
-    """List all connected knowledge sources (defaults + user-registered)."""
-    sources = db.list_sources()
+def list_sources(project: str = "") -> str:
+    """List connected knowledge sources. Pass a project name to filter, or omit for all."""
+    sources = db.list_sources(project=project or None)
     if not sources:
         return "No sources connected."
     default_lines = []
     user_lines = []
-    for source_type, identifier, label, is_default in sources:
+    for source_type, identifier, label, is_default, proj in sources:
         entry = f"- {source_type}: {identifier}"
         if label:
             entry += f" ({label})"
+        if not project:
+            entry += f" [project: {proj}]"
         (default_lines if is_default else user_lines).append(entry)
     out = []
     if default_lines:

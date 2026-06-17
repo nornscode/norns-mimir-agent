@@ -91,6 +91,15 @@ def handle_message(body, say, client):
     _handle(body, say, client)
 
 
+def _resolve_project(channel: str) -> str | None:
+    """Look up the project for a Slack channel. Returns None if unmapped."""
+    try:
+        from mimir_agent import db
+        return db.get_project_for_channel(channel)
+    except Exception:
+        return None
+
+
 def _handle(body, say, client):
     event = body["event"]
 
@@ -106,6 +115,13 @@ def _handle(body, say, client):
     user_text = re.sub(r"<@\w+>", "", user_text).strip()
     if not user_text:
         return
+
+    # Resolve channel → project and prepend context
+    project = _resolve_project(channel)
+    if project:
+        user_text = f"[channel_id={channel}, project={project}] {user_text}"
+    else:
+        user_text = f"[channel_id={channel}] {user_text}"
 
     conversation_key = f"slack:{channel}:{thread_ts}"
 

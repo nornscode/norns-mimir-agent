@@ -22,7 +22,7 @@ def _get_conn():
 
 
 def init():
-    """Create the memories table with pgvector support if it doesn't exist."""
+    """Create tables with pgvector support if they don't exist."""
     global _initialized
     conn = _get_conn()
     with conn.cursor() as cur:
@@ -36,14 +36,19 @@ def init():
                 key TEXT NOT NULL UNIQUE,
                 content TEXT NOT NULL,
                 embedding vector({config.EMBEDDING_DIMENSIONS}),
+                project TEXT NOT NULL DEFAULT 'default',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Migrate existing tables that don't have the embedding column yet
+        # Migrate existing tables
         cur.execute(f"""
             ALTER TABLE memories
             ADD COLUMN IF NOT EXISTS embedding vector({config.EMBEDDING_DIMENSIONS})
+        """)
+        cur.execute("""
+            ALTER TABLE memories
+            ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'default'
         """)
         cur.execute("""
             SELECT 1 FROM pg_indexes
@@ -63,13 +68,44 @@ def init():
                 identifier TEXT NOT NULL,
                 label TEXT,
                 is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                project TEXT NOT NULL DEFAULT 'default',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
-                UNIQUE (type, identifier)
+                UNIQUE (type, identifier, project)
             )
         """)
         cur.execute("""
             ALTER TABLE sources
             ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        cur.execute("""
+            ALTER TABLE sources
+            ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'default'
+        """)
+        # Migrate unique constraint to include project
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'sources_type_identifier_key'
+                ) THEN
+                    ALTER TABLE sources DROP CONSTRAINT sources_type_identifier_key;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS sources_type_identifier_project_idx
+            ON sources (type, identifier, project)
+        """)
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                channel_id TEXT UNIQUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
         """)
 
     _backfill_embeddings()
@@ -102,49 +138,69 @@ def _backfill_embeddings():
     logger.info("Backfill complete")
 
 
-def upsert_memory(key: str, content: str, embedding: list[float]) -> None:
+def upsert_memory(key: str, content: str, embedding: list[float], project: str = "default") -> None:
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO memories (key, content, embedding, updated_at)
-            VALUES (%s, %s, %s::vector, NOW())
+            INSERT INTO memories (key, content, embedding, project, updated_at)
+            VALUES (%s, %s, %s::vector, %s, NOW())
             ON CONFLICT (key) DO UPDATE
-                SET content = %s, embedding = %s::vector, updated_at = NOW()
+                SET content = %s, embedding = %s::vector, project = %s, updated_at = NOW()
             """,
-            (key, content, embedding, content, embedding),
+            (key, content, embedding, project, content, embedding, project),
         )
 
 
-def search_memories(query_embedding: list[float], limit: int = 10) -> list[tuple[str, str, float]]:
-    """Search memories by vector similarity, with ILIKE fallback for un-embedded rows."""
+def search_memories(
+    query_embedding: list[float],
+    limit: int = 10,
+    project: str | None = None,
+) -> list[tuple[str, str, float, str]]:
+    """Search memories by vector similarity. Optionally filter by project.
+
+    When project is None, searches all projects.
+    Returns (key, content, similarity, project) tuples.
+    """
     conn = _get_conn()
     with conn.cursor() as cur:
-        # Try vector search first
-        cur.execute(
-            """
-            SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity
-            FROM memories
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-            """,
-            (query_embedding, query_embedding, limit),
-        )
+        if project:
+            cur.execute(
+                """
+                SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity, project
+                FROM memories
+                WHERE embedding IS NOT NULL AND project = %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (query_embedding, project, query_embedding, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity, project
+                FROM memories
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (query_embedding, query_embedding, limit),
+            )
         results = cur.fetchall()
         if results:
             return results
 
-        # Fall back to keyword search if no embedded rows exist yet
-        cur.execute(
-            """
-            SELECT key, content, 0.0 AS similarity
-            FROM memories
-            ORDER BY updated_at DESC
-            LIMIT %s
-            """,
-            (limit,),
-        )
+        # Fall back if no embedded rows exist yet
+        if project:
+            cur.execute(
+                "SELECT key, content, 0.0 AS similarity, project FROM memories WHERE project = %s ORDER BY updated_at DESC LIMIT %s",
+                (project, limit),
+            )
+        else:
+            cur.execute(
+                "SELECT key, content, 0.0 AS similarity, project FROM memories ORDER BY updated_at DESC LIMIT %s",
+                (limit,),
+            )
         return cur.fetchall()
 
 
@@ -167,28 +223,29 @@ def add_source(
     identifier: str,
     label: str | None = None,
     is_default: bool = False,
+    project: str = "default",
 ) -> bool:
     """Add a connected source. Returns True if added, False if already exists."""
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO sources (type, identifier, label, is_default)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (type, identifier) DO NOTHING
+            INSERT INTO sources (type, identifier, label, is_default, project)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (type, identifier, project) DO NOTHING
             """,
-            (source_type, identifier, label, is_default),
+            (source_type, identifier, label, is_default, project),
         )
         return cur.rowcount > 0
 
 
-def remove_source(source_type: str, identifier: str) -> bool:
+def remove_source(source_type: str, identifier: str, project: str = "default") -> bool:
     """Remove a connected source. Default sources cannot be removed."""
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM sources WHERE type = %s AND identifier = %s AND is_default = FALSE",
-            (source_type, identifier),
+            "DELETE FROM sources WHERE type = %s AND identifier = %s AND project = %s AND is_default = FALSE",
+            (source_type, identifier, project),
         )
         return cur.rowcount > 0
 
@@ -196,8 +253,9 @@ def remove_source(source_type: str, identifier: str) -> bool:
 def list_sources(
     source_type: str | None = None,
     user_only: bool = False,
-) -> list[tuple[str, str, str | None, bool]]:
-    """List connected sources. Each row: (type, identifier, label, is_default)."""
+    project: str | None = None,
+) -> list[tuple[str, str, str | None, bool, str]]:
+    """List connected sources. Each row: (type, identifier, label, is_default, project)."""
     conn = _get_conn()
     clauses = []
     params: list = []
@@ -206,28 +264,37 @@ def list_sources(
         params.append(source_type)
     if user_only:
         clauses.append("is_default = FALSE")
+    if project:
+        clauses.append("(project = %s OR is_default = TRUE)")
+        params.append(project)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT type, identifier, label, is_default FROM sources {where} "
+            f"SELECT type, identifier, label, is_default, project FROM sources {where} "
             "ORDER BY is_default DESC, type, identifier",
             params,
         )
         return cur.fetchall()
 
 
-def user_source_count() -> int:
+def user_source_count(project: str | None = None) -> int:
     """Count sources the user has registered (excludes always-on defaults)."""
     conn = _get_conn()
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM sources WHERE is_default = FALSE")
+        if project:
+            cur.execute(
+                "SELECT count(*) FROM sources WHERE is_default = FALSE AND project = %s",
+                (project,),
+            )
+        else:
+            cur.execute("SELECT count(*) FROM sources WHERE is_default = FALSE")
         return cur.fetchone()[0]
 
 
-def get_github_repos() -> list[str]:
+def get_github_repos(project: str | None = None) -> list[str]:
     """Get all connected GitHub repos (defaults + user + env config)."""
     repos = set(config.GITHUB_REPOS)
-    for _, identifier, _, _ in list_sources("github_repo"):
+    for _, identifier, _, _, _ in list_sources("github_repo", project=project):
         repos.add(identifier)
     return sorted(repos)
 
@@ -255,3 +322,36 @@ def memory_count() -> int:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM memories")
         return cur.fetchone()[0]
+
+
+# --- Projects ---
+
+def set_channel_project(channel_id: str, project_name: str) -> None:
+    """Map a Slack channel to a project. Creates the project if needed."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO projects (name, channel_id)
+            VALUES (%s, %s)
+            ON CONFLICT (name) DO UPDATE SET channel_id = %s
+            """,
+            (project_name, channel_id, channel_id),
+        )
+
+
+def get_project_for_channel(channel_id: str) -> str | None:
+    """Look up which project a channel belongs to. Returns None if unmapped."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT name FROM projects WHERE channel_id = %s", (channel_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def list_projects() -> list[tuple[str, str | None]]:
+    """List all projects. Returns (name, channel_id) tuples."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT name, channel_id FROM projects ORDER BY name")
+        return cur.fetchall()

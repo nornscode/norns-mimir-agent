@@ -8,6 +8,7 @@ from mimir_agent.tools.github import (
     search_github,
 )
 from mimir_agent.tools.memory import remember, reset_memory, search_memory
+from mimir_agent.tools.projects import list_projects, set_channel_project
 from mimir_agent.tools.release_notes import draft_release_notes
 from mimir_agent.tools.sources import (
     connect_source,
@@ -35,4 +36,6 @@ all_tools = [
     disconnect_source,
     installation_status,
     list_sources,
+    list_projects,
+    set_channel_project,
 ]

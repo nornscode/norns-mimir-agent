@@ -12,7 +12,7 @@ class TestRemember:
             result = remember.handler("test_key", "test content")
 
         mock_get_emb.assert_called_once_with("test_key test content")
-        mock_db.upsert_memory.assert_called_once_with("test_key", "test content", mock_embedding)
+        mock_db.upsert_memory.assert_called_once_with("test_key", "test content", mock_embedding, project="default")
         assert "Remembered" in result
         assert "test_key" in result
 
@@ -21,8 +21,8 @@ class TestSearchMemory:
     def test_returns_formatted_results(self):
         mock_embedding = [0.1, 0.2, 0.3]
         mock_results = [
-            ("norns_url", "https://github.com/amackera/norns", 0.95),
-            ("cat_name", "Wally", 0.42),
+            ("norns_url", "https://github.com/amackera/norns", 0.95, "default"),
+            ("cat_name", "Wally", 0.42, "default"),
         ]
         with (
             patch("mimir_agent.tools.memory.get_embedding", return_value=mock_embedding),
