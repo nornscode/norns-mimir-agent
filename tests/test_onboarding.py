@@ -104,13 +104,17 @@ class TestDefaultSeeding:
         with (
             patch("mimir_agent.db.config") as mock_config,
             patch("mimir_agent.db.add_source") as mock_add,
+            patch("mimir_agent.db.upsert_memory") as mock_upsert,
+            patch("mimir_agent.embeddings.get_embedding", return_value=[0.1, 0.2, 0.3]),
         ):
             mock_config.DEFAULT_SOURCES = [
                 ("github_repo", "nornscode/norns", "Norns"),
             ]
-            from mimir_agent.db import _seed_default_sources
+            from mimir_agent.db import _seed_default_sources, GLOBAL_PROJECT
             _seed_default_sources()
 
         mock_add.assert_called_once_with(
-            "github_repo", "nornscode/norns", label="Norns", is_default=True
+            "github_repo", "nornscode/norns", label="Norns", is_default=True, project=GLOBAL_PROJECT
         )
+        mock_upsert.assert_called_once()
+        assert mock_upsert.call_args.kwargs["project"] == GLOBAL_PROJECT

@@ -152,6 +152,10 @@ def upsert_memory(key: str, content: str, embedding: list[float], project: str =
         )
 
 
+# Memories stored under _global are always included in project-scoped searches.
+GLOBAL_PROJECT = "_global"
+
+
 def search_memories(
     query_embedding: list[float],
     limit: int = 10,
@@ -159,6 +163,7 @@ def search_memories(
 ) -> list[tuple[str, str, float, str]]:
     """Search memories by vector similarity. Optionally filter by project.
 
+    When project is given, searches that project + _global memories.
     When project is None, searches all projects.
     Returns (key, content, similarity, project) tuples.
     """
@@ -169,11 +174,11 @@ def search_memories(
                 """
                 SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity, project
                 FROM memories
-                WHERE embedding IS NOT NULL AND project = %s
+                WHERE embedding IS NOT NULL AND project IN (%s, %s)
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (query_embedding, project, query_embedding, limit),
+                (query_embedding, project, GLOBAL_PROJECT, query_embedding, limit),
             )
         else:
             cur.execute(
@@ -193,8 +198,8 @@ def search_memories(
         # Fall back if no embedded rows exist yet
         if project:
             cur.execute(
-                "SELECT key, content, 0.0 AS similarity, project FROM memories WHERE project = %s ORDER BY updated_at DESC LIMIT %s",
-                (project, limit),
+                "SELECT key, content, 0.0 AS similarity, project FROM memories WHERE project IN (%s, %s) ORDER BY updated_at DESC LIMIT %s",
+                (project, GLOBAL_PROJECT, limit),
             )
         else:
             cur.execute(
@@ -207,9 +212,19 @@ def search_memories(
 # --- Sources ---
 
 def _seed_default_sources():
-    """Seed the always-on default sources (public repos shipped with every install)."""
+    """Seed the always-on default sources (public repos shipped with every install).
+
+    Also creates _global memory entries so search_memory finds them from any project.
+    """
+    from mimir_agent.embeddings import get_embedding
+
     for source_type, identifier, label in config.DEFAULT_SOURCES:
-        add_source(source_type, identifier, label=label, is_default=True)
+        add_source(source_type, identifier, label=label, is_default=True, project=GLOBAL_PROJECT)
+        # Ensure a _global memory entry exists for each default source
+        key = f"{source_type}:{identifier}"
+        content = f"Default source: {label or identifier} ({source_type}: {identifier})"
+        embedding = get_embedding(f"{key} {content}")
+        upsert_memory(key, content, embedding, project=GLOBAL_PROJECT)
 
 
 def _seed_sources_from_config():
@@ -265,8 +280,8 @@ def list_sources(
     if user_only:
         clauses.append("is_default = FALSE")
     if project:
-        clauses.append("(project = %s OR is_default = TRUE)")
-        params.append(project)
+        clauses.append("(project IN (%s, %s) OR is_default = TRUE)")
+        params.extend([project, GLOBAL_PROJECT])
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with conn.cursor() as cur:
         cur.execute(
