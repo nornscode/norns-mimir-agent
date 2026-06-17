@@ -17,7 +17,7 @@ async def run_worker():
     from norns import Agent
     agent = Agent(
         name="mimir-agent",
-        model="claude-sonnet-4-20250514",
+        model=config.MODEL,
         system_prompt=SYSTEM_PROMPT,
         tools=all_tools,
         mode="conversation",
