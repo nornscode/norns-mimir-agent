@@ -3,32 +3,20 @@
 from unittest.mock import MagicMock, patch
 
 
-class TestOnboardingTrigger:
-    def test_empty_returns_onboarding_prompt(self):
-        with patch("mimir_agent.db.user_source_count", return_value=0):
-            from mimir_agent.worker import _build_onboarding_section, ONBOARDING_PROMPT
-            assert _build_onboarding_section() == ONBOARDING_PROMPT
+class TestInstallationStatus:
+    def test_empty_returns_needs_onboarding(self):
+        with patch("mimir_agent.tools.sources.db") as mock_db:
+            mock_db.user_source_count.return_value = 0
+            from mimir_agent.tools.sources import installation_status
+            assert installation_status.handler() == "needs_onboarding"
 
-    def test_user_sources_silence_onboarding(self):
-        with patch("mimir_agent.db.user_source_count", return_value=1):
-            from mimir_agent.worker import _build_onboarding_section
-            assert _build_onboarding_section() == ""
-
-
-class TestSourcesSection:
-    def test_separates_defaults_from_user(self):
-        fake_rows = [
-            ("github_repo", "nornscode/norns", "Norns durable runtime", True),
-            ("github_repo", "acme/product", None, False),
-        ]
-        with patch("mimir_agent.db.list_sources", return_value=fake_rows):
-            from mimir_agent.worker import _build_sources_section
-            out = _build_sources_section()
-
-        assert "Always-on" in out
-        assert "User-registered" in out
-        assert "nornscode/norns" in out
-        assert "acme/product" in out
+    def test_user_sources_returns_onboarded(self):
+        with patch("mimir_agent.tools.sources.db") as mock_db:
+            mock_db.user_source_count.return_value = 3
+            from mimir_agent.tools.sources import installation_status
+            out = installation_status.handler()
+        assert out.startswith("onboarded")
+        assert "3" in out
 
 
 class TestConnectSource:
@@ -55,6 +43,7 @@ class TestConnectSource:
         with (
             patch("mimir_agent.tools.sources.config") as mock_config,
             patch("mimir_agent.tools.sources.db") as mock_db,
+            patch("mimir_agent.tools.memory.remember") as mock_remember,
             patch("github.Github", return_value=fake_client),
         ):
             mock_config.GITHUB_TOKEN = "ghp_fake"
@@ -63,6 +52,9 @@ class TestConnectSource:
             result = connect_source.handler("github_repo", "acme/product")
 
         mock_db.add_source.assert_called_once()
+        mock_remember.handler.assert_called_once()
+        remember_kwargs = mock_remember.handler.call_args.kwargs
+        assert "acme/product" in remember_kwargs["key"]
         assert "Connected" in result
 
     def test_url_ingest_stores_in_memory(self):

@@ -17,9 +17,16 @@ SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPOS = [r.strip() for r in os.environ.get("GITHUB_REPOS", "").split(",") if r.strip()]
 
+# Figma — personal access token, required for figma_file sources.
+# Generate at https://www.figma.com/settings → Personal access tokens.
+FIGMA_TOKEN = os.environ.get("FIGMA_TOKEN", "")
+
 # Embeddings (local)
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "384"))
+
+# Model
+MODEL = os.environ.get("MIMIR_MODEL", "claude-sonnet-4-latest")
 
 # Runtime
 DEV_MODE = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")

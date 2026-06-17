@@ -6,7 +6,7 @@ import uuid
 from norns.client import Norns
 
 from mimir_agent import config, db
-from mimir_agent.worker import _build_system_prompt
+from mimir_agent.worker import SYSTEM_PROMPT
 from mimir_agent.tools import all_tools
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -18,7 +18,7 @@ async def run_worker():
     agent = Agent(
         name="mimir-agent",
         model="claude-sonnet-4-20250514",
-        system_prompt=_build_system_prompt(),
+        system_prompt=SYSTEM_PROMPT,
         tools=all_tools,
         mode="conversation",
         max_steps=40,
