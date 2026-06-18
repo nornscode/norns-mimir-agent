@@ -67,6 +67,20 @@ def init():
             CREATE UNIQUE INDEX IF NOT EXISTS memories_key_project_idx
             ON memories (key, project)
         """)
+        # Drop agent_id NOT NULL constraint if it exists (added by Norns server)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memories'
+                    AND column_name = 'agent_id'
+                    AND is_nullable = 'NO'
+                ) THEN
+                    ALTER TABLE memories ALTER COLUMN agent_id DROP NOT NULL;
+                END IF;
+            END $$;
+        """)
         cur.execute("""
             SELECT 1 FROM pg_indexes
             WHERE indexname = 'memories_embedding_idx'
