@@ -33,12 +33,13 @@ def init():
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS memories (
                 id SERIAL PRIMARY KEY,
-                key TEXT NOT NULL UNIQUE,
+                key TEXT NOT NULL,
                 content TEXT NOT NULL,
                 embedding vector({config.EMBEDDING_DIMENSIONS}),
                 project TEXT NOT NULL DEFAULT 'default',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (key, project)
             )
         """)
         # Migrate existing tables
@@ -49,6 +50,22 @@ def init():
         cur.execute("""
             ALTER TABLE memories
             ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'default'
+        """)
+        # Migrate unique constraint from (key) to (key, project)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'memories_key_key'
+                ) THEN
+                    ALTER TABLE memories DROP CONSTRAINT memories_key_key;
+                END IF;
+            END $$;
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS memories_key_project_idx
+            ON memories (key, project)
         """)
         cur.execute("""
             SELECT 1 FROM pg_indexes
@@ -145,10 +162,10 @@ def upsert_memory(key: str, content: str, embedding: list[float], project: str =
             """
             INSERT INTO memories (key, content, embedding, project, updated_at)
             VALUES (%s, %s, %s::vector, %s, NOW())
-            ON CONFLICT (key) DO UPDATE
-                SET content = %s, embedding = %s::vector, project = %s, updated_at = NOW()
+            ON CONFLICT (key, project) DO UPDATE
+                SET content = %s, embedding = %s::vector, updated_at = NOW()
             """,
-            (key, content, embedding, project, content, embedding, project),
+            (key, content, embedding, project, content, embedding),
         )
 
 
