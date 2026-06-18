@@ -111,8 +111,28 @@ def _handle(body, say, client):
     thread_ts = event.get("thread_ts", event["ts"])
     user_text = event.get("text", "")
 
-    # Strip bot mention
-    user_text = re.sub(r"<@\w+>", "", user_text).strip()
+    # Strip only the bot's own mention, resolve other @mentions to names
+    if _bot_user_id is None:
+        try:
+            _bot_user_id = client.auth_test()["user_id"]
+        except Exception:
+            pass
+    if _bot_user_id:
+        user_text = user_text.replace(f"<@{_bot_user_id}>", "").strip()
+    else:
+        user_text = re.sub(r"<@\w+>", "", user_text, count=1).strip()
+
+    # Resolve remaining <@U...> mentions to display names
+    def _resolve_mention(match):
+        uid = match.group(1)
+        try:
+            info = client.users_info(user=uid)
+            name = info["user"].get("real_name") or info["user"].get("name", uid)
+            return f"@{name}"
+        except Exception:
+            return match.group(0)
+
+    user_text = re.sub(r"<@(\w+)>", _resolve_mention, user_text)
     if not user_text:
         return
 
