@@ -101,6 +101,7 @@ def _resolve_project(channel: str) -> str | None:
 
 
 def _handle(body, say, client):
+    global _bot_user_id
     event = body["event"]
 
     # Skip bot messages to avoid loops
