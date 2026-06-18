@@ -67,18 +67,20 @@ def init():
             CREATE UNIQUE INDEX IF NOT EXISTS memories_key_project_idx
             ON memories (key, project)
         """)
-        # Drop agent_id NOT NULL constraint if it exists (added by Norns server)
+        # Drop NOT NULL on columns added by Norns server (agent_id, tenant_id, etc.)
         cur.execute("""
             DO $$
+            DECLARE
+                col TEXT;
             BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
+                FOR col IN
+                    SELECT column_name FROM information_schema.columns
                     WHERE table_name = 'memories'
-                    AND column_name = 'agent_id'
+                    AND column_name NOT IN ('id', 'key', 'content', 'embedding', 'project', 'created_at', 'updated_at')
                     AND is_nullable = 'NO'
-                ) THEN
-                    ALTER TABLE memories ALTER COLUMN agent_id DROP NOT NULL;
-                END IF;
+                LOOP
+                    EXECUTE format('ALTER TABLE memories ALTER COLUMN %I DROP NOT NULL', col);
+                END LOOP;
             END $$;
         """)
         cur.execute("""
