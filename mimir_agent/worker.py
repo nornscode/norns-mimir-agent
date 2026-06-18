@@ -117,6 +117,7 @@ def main():
         tools=all_tools,
         mode="conversation",
         max_steps=40,
+        context_window=50,
         on_failure="retry_last_step",
     )
 

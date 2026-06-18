@@ -37,6 +37,7 @@ async def run_worker():
         tools=all_tools,
         mode="conversation",
         max_steps=40,
+        context_window=50,
         on_failure="retry_last_step",
     )
     norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
