@@ -129,9 +129,10 @@ def _download_slack_files(event: dict, token: str) -> str:
         name = f.get("name", "unknown")
         mimetype = f.get("mimetype", "")
         filetype = f.get("filetype", "")
-        url = f.get("url_private_download") or f.get("url_private")
+        url = f.get("url_private_download")
 
         if not url:
+            # url_private is the web viewer, not the raw file — skip it
             continue
 
         if not _is_text_file(mimetype, filetype):
@@ -221,25 +222,30 @@ def _resolve_slack_file_links(text: str, client) -> str:
             name = f.get("name", "unknown")
             mimetype = f.get("mimetype", "")
             filetype = f.get("filetype", "")
-            download_url = f.get("url_private_download") or f.get("url_private")
-
-            if not download_url:
-                return f"[Slack file: {name} (no download URL)]"
-
             if not _is_text_file(mimetype, filetype):
                 return f"[Slack file: {name} (type: {mimetype}, not readable as text)]"
 
-            import httpx
-            resp = httpx.get(
-                download_url,
-                headers={"Authorization": f"Bearer {config.SLACK_BOT_TOKEN}"},
-                follow_redirects=True,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            content = resp.text
+            # Some file types have content inline in the API response
+            content = f.get("content") or f.get("plain_text") or f.get("preview")
+
+            # Otherwise download via url_private_download
+            if not content:
+                download_url = f.get("url_private_download")
+                if not download_url:
+                    return f"[Slack file: {name} (no direct download URL available)]"
+
+                import httpx
+                resp = httpx.get(
+                    download_url,
+                    headers={"Authorization": f"Bearer {config.SLACK_BOT_TOKEN}"},
+                    follow_redirects=True,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                content = resp.text
+
             if len(content) > MAX_FILE_SIZE:
-                content = content[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(resp.text)} chars total)"
+                content = content[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(content)} chars total)"
             return f"\n--- Slack file: {name} ---\n{content}"
         except Exception as e:
             return f"[Slack file {file_id}: failed to fetch ({e})]"
