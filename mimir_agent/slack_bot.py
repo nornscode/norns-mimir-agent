@@ -91,6 +91,72 @@ def handle_message(body, say, client):
     _handle(body, say, client)
 
 
+MAX_FILE_SIZE = 8000  # same cap as other tools
+
+TEXT_MIMETYPES = {
+    "text/", "application/json", "application/xml", "application/javascript",
+    "application/x-yaml", "application/toml", "application/csv",
+    "application/x-sh", "application/sql", "application/graphql",
+}
+
+
+def _is_text_file(mimetype: str, filetype: str) -> bool:
+    """Check if a Slack file is a text-based file we can read."""
+    if any(mimetype.startswith(t) for t in TEXT_MIMETYPES):
+        return True
+    # Slack filetypes for code/text
+    text_filetypes = {
+        "python", "javascript", "typescript", "ruby", "go", "rust", "java",
+        "c", "cpp", "csharp", "swift", "kotlin", "scala", "php", "perl",
+        "shell", "bash", "zsh", "fish", "powershell",
+        "html", "css", "scss", "less", "xml", "svg",
+        "json", "yaml", "toml", "ini", "conf", "cfg",
+        "markdown", "text", "plain", "csv", "tsv", "log",
+        "sql", "graphql", "proto", "dockerfile", "makefile",
+        "elixir", "erlang", "haskell", "clojure", "lisp",
+    }
+    return filetype.lower() in text_filetypes
+
+
+def _download_slack_files(event: dict, token: str) -> str:
+    """Download text-based file attachments and return their contents."""
+    files = event.get("files", [])
+    if not files:
+        return ""
+
+    parts = []
+    for f in files:
+        name = f.get("name", "unknown")
+        mimetype = f.get("mimetype", "")
+        filetype = f.get("filetype", "")
+        url = f.get("url_private_download") or f.get("url_private")
+
+        if not url:
+            continue
+
+        if not _is_text_file(mimetype, filetype):
+            parts.append(f"\n--- Attached file: {name} (type: {mimetype}, not readable as text) ---")
+            continue
+
+        try:
+            import httpx
+            resp = httpx.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                follow_redirects=True,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            text = resp.text
+            if len(text) > MAX_FILE_SIZE:
+                text = text[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(resp.text)} chars total)"
+            parts.append(f"\n--- Attached file: {name} ---\n{text}")
+        except Exception as e:
+            parts.append(f"\n--- Attached file: {name} (failed to download: {e}) ---")
+
+    return "\n".join(parts)
+
+
 def _resolve_project(channel: str) -> str | None:
     """Look up the project for a Slack channel. Returns None if unmapped."""
     try:
@@ -134,6 +200,12 @@ def _handle(body, say, client):
             return match.group(0)
 
     user_text = re.sub(r"<@(\w+)>", _resolve_mention, user_text)
+
+    # Download attached files and append their contents
+    file_contents = _download_slack_files(event, config.SLACK_BOT_TOKEN)
+    if file_contents:
+        user_text = user_text + file_contents
+
     if not user_text:
         return
 
