@@ -77,14 +77,15 @@ class TestDownloadSlackFiles:
         call_kwargs = mock_get.call_args
         assert "Bearer xoxb-fake" in str(call_kwargs)
 
-    def test_skips_file_without_download_url(self):
+    def test_reports_file_without_download_url(self):
         event = {
             "files": [
                 {"name": "snippet.txt", "mimetype": "text/plain", "filetype": "text"}
             ]
         }
         result = _download_slack_files(event, "xoxb-fake")
-        assert result == ""
+        assert "no download URL" in result
+        assert "snippet.txt" in result
 
 
 class TestResolveSlackLinks:

@@ -118,7 +118,7 @@ def _is_text_file(mimetype: str, filetype: str) -> bool:
     return filetype.lower() in text_filetypes
 
 
-def _download_slack_files(event: dict, token: str) -> str:
+def _download_slack_files(event: dict, token: str, client=None) -> str:
     """Download text-based file attachments and return their contents."""
     files = event.get("files", [])
     if not files:
@@ -127,33 +127,52 @@ def _download_slack_files(event: dict, token: str) -> str:
     parts = []
     for f in files:
         name = f.get("name", "unknown")
+        file_id = f.get("id")
         mimetype = f.get("mimetype", "")
         filetype = f.get("filetype", "")
-        url = f.get("url_private_download")
 
-        if not url:
-            # url_private is the web viewer, not the raw file — skip it
-            continue
+        # Slack event payloads sometimes omit url_private_download.
+        # Use files.info API to get the full file metadata when we have a client.
+        if file_id and client and not f.get("url_private_download"):
+            try:
+                info = client.files_info(file=file_id)
+                f = info.get("file", f)
+                name = f.get("name", name)
+                mimetype = f.get("mimetype", mimetype)
+                filetype = f.get("filetype", filetype)
+            except Exception:
+                pass
 
         if not _is_text_file(mimetype, filetype):
             parts.append(f"\n--- Attached file: {name} (type: {mimetype}, not readable as text) ---")
             continue
 
-        try:
-            import httpx
-            resp = httpx.get(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                follow_redirects=True,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            text = resp.text
-            if len(text) > MAX_FILE_SIZE:
-                text = text[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(resp.text)} chars total)"
-            parts.append(f"\n--- Attached file: {name} ---\n{text}")
-        except Exception as e:
-            parts.append(f"\n--- Attached file: {name} (failed to download: {e}) ---")
+        # Try inline content first (some file types have it in the API response)
+        text = f.get("content") or f.get("plain_text") or f.get("preview")
+
+        if not text:
+            url = f.get("url_private_download")
+            if not url:
+                parts.append(f"\n--- Attached file: {name} (no download URL available) ---")
+                continue
+
+            try:
+                import httpx
+                resp = httpx.get(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    follow_redirects=True,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                text = resp.text
+            except Exception as e:
+                parts.append(f"\n--- Attached file: {name} (failed to download: {e}) ---")
+                continue
+
+        if len(text) > MAX_FILE_SIZE:
+            text = text[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(text)} chars total)"
+        parts.append(f"\n--- Attached file: {name} ---\n{text}")
 
     return "\n".join(parts)
 
@@ -192,7 +211,7 @@ def _resolve_slack_links(text: str, client) -> str:
                     pass
                 parts = [f"[Slack message from {user}: {msg_text}]"]
                 # Also fetch any files attached to the linked message
-                file_contents = _download_slack_files(msg, config.SLACK_BOT_TOKEN)
+                file_contents = _download_slack_files(msg, config.SLACK_BOT_TOKEN, client=client)
                 if file_contents:
                     parts.append(file_contents)
                 return "\n".join(parts)
@@ -304,7 +323,7 @@ def _handle(body, say, client):
     user_text = _resolve_slack_file_links(user_text, client)
 
     # Download attached files on the current message
-    file_contents = _download_slack_files(event, config.SLACK_BOT_TOKEN)
+    file_contents = _download_slack_files(event, config.SLACK_BOT_TOKEN, client=client)
     if file_contents:
         user_text = user_text + file_contents
 
