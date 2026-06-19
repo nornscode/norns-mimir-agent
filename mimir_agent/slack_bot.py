@@ -281,6 +281,51 @@ def _resolve_project(channel: str) -> str | None:
         return None
 
 
+def _fetch_thread_context(
+    channel: str, thread_ts: str, current_ts: str, client, bot_user_id: str | None
+) -> str | None:
+    """Fetch the prior messages in a thread so the agent sees the full context
+    on its first invocation. Returns None if the bot has already replied in
+    this thread (Norns already has the history) or if there's nothing to add.
+    """
+    try:
+        result = client.conversations_replies(channel=channel, ts=thread_ts, limit=100)
+    except Exception:
+        return None
+
+    msgs = result.get("messages", [])
+    prior = [m for m in msgs if m.get("ts") != current_ts]
+    if not prior:
+        return None
+
+    # If the bot has already replied in this thread, Norns has the conversation
+    # state — re-including thread history would duplicate it.
+    if bot_user_id and any(m.get("user") == bot_user_id for m in prior):
+        return None
+
+    lines = []
+    for m in prior:
+        if m.get("bot_id") or m.get("subtype"):
+            continue
+        text = m.get("text", "").strip()
+        if not text:
+            continue
+        user_id = m.get("user", "unknown")
+        try:
+            info = client.users_info(user=user_id)
+            user = info["user"].get("real_name") or info["user"].get("name", user_id)
+        except Exception:
+            user = user_id
+        # Strip raw <@U...> mention markup so it reads naturally
+        text = re.sub(r"<@\w+>", "", text).strip()
+        lines.append(f"{user}: {text}")
+
+    if not lines:
+        return None
+
+    return "[Earlier messages in this thread, for context]\n" + "\n\n".join(lines)
+
+
 def _handle(body, say, client):
     global _bot_user_id
     event = body["event"]
@@ -329,6 +374,16 @@ def _handle(body, say, client):
 
     if not user_text:
         return
+
+    # If this is a reply in an existing thread, pull in the prior messages so
+    # the agent has the full conversation on first invocation. Skipped if the
+    # bot has already participated (Norns has the history).
+    if event.get("thread_ts") and event["thread_ts"] != event["ts"]:
+        thread_context = _fetch_thread_context(
+            channel, thread_ts, event["ts"], client, _bot_user_id
+        )
+        if thread_context:
+            user_text = f"{thread_context}\n\n[Your task / the latest message]\n{user_text}"
 
     # Resolve channel → project and prepend context
     project = _resolve_project(channel)
