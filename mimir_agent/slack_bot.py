@@ -180,20 +180,71 @@ def _resolve_slack_links(text: str, client) -> str:
             )
             msgs = result.get("messages", [])
             if msgs:
-                msg_text = msgs[0].get("text", "")
-                user = msgs[0].get("user", "unknown")
+                msg = msgs[0]
+                msg_text = msg.get("text", "")
+                user = msg.get("user", "unknown")
                 # Try to resolve user name
                 try:
                     info = client.users_info(user=user)
                     user = info["user"].get("real_name") or info["user"].get("name", user)
                 except Exception:
                     pass
-                return f"[Slack message from {user}: {msg_text}]"
+                parts = [f"[Slack message from {user}: {msg_text}]"]
+                # Also fetch any files attached to the linked message
+                file_contents = _download_slack_files(msg, config.SLACK_BOT_TOKEN)
+                if file_contents:
+                    parts.append(file_contents)
+                return "\n".join(parts)
         except Exception:
             pass
         return url
 
     return slack_link_re.sub(_expand, text)
+
+
+def _resolve_slack_file_links(text: str, client) -> str:
+    """Expand Slack file links into their content.
+
+    Slack formats file links as <https://workspace.slack.com/files/U.../F.../name|label>.
+    We fetch the file info via API and download the content.
+    """
+    file_link_re = re.compile(
+        r"<(https?://[^/]+\.slack\.com/files/[A-Z0-9]+/([A-Z0-9]+)/[^|>]+)(?:\|[^>]*)?>" 
+    )
+
+    def _expand(match):
+        url = match.group(1)
+        file_id = match.group(2)
+        try:
+            result = client.files_info(file=file_id)
+            f = result.get("file", {})
+            name = f.get("name", "unknown")
+            mimetype = f.get("mimetype", "")
+            filetype = f.get("filetype", "")
+            download_url = f.get("url_private_download") or f.get("url_private")
+
+            if not download_url:
+                return f"[Slack file: {name} (no download URL)]"
+
+            if not _is_text_file(mimetype, filetype):
+                return f"[Slack file: {name} (type: {mimetype}, not readable as text)]"
+
+            import httpx
+            resp = httpx.get(
+                download_url,
+                headers={"Authorization": f"Bearer {config.SLACK_BOT_TOKEN}"},
+                follow_redirects=True,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            content = resp.text
+            if len(content) > MAX_FILE_SIZE:
+                content = content[:MAX_FILE_SIZE] + f"\n\n... (truncated, {len(resp.text)} chars total)"
+            return f"\n--- Slack file: {name} ---\n{content}"
+        except Exception as e:
+            return f"[Slack file {file_id}: failed to fetch ({e})]"
+
+    return file_link_re.sub(_expand, text)
 
 
 def _resolve_project(channel: str) -> str | None:
@@ -240,10 +291,13 @@ def _handle(body, say, client):
 
     user_text = re.sub(r"<@(\w+)>", _resolve_mention, user_text)
 
-    # Expand Slack message links into their content
+    # Expand Slack message links into their content (including their attachments)
     user_text = _resolve_slack_links(user_text, client)
 
-    # Download attached files and append their contents
+    # Expand Slack file links into their content
+    user_text = _resolve_slack_file_links(user_text, client)
+
+    # Download attached files on the current message
     file_contents = _download_slack_files(event, config.SLACK_BOT_TOKEN)
     if file_contents:
         user_text = user_text + file_contents
