@@ -62,6 +62,17 @@ def handle_message(body, say, client):
     if event.get("bot_id") or event.get("subtype"):
         return
 
+    # Resolve bot user id once so we can dedupe @mentions and check thread membership
+    try:
+        if _bot_user_id is None:
+            _bot_user_id = client.auth_test()["user_id"]
+    except Exception:
+        pass
+
+    # @mentions also fire `app_mention` — let that handler respond so we don't double-reply
+    if _bot_user_id and f"<@{_bot_user_id}>" in event.get("text", ""):
+        return
+
     # Respond directly in DMs
     if event.get("channel_type") == "im":
         _handle(body, say, client)
@@ -74,9 +85,6 @@ def handle_message(body, say, client):
 
     # Check if we've already replied in this thread
     try:
-        if _bot_user_id is None:
-            _bot_user_id = client.auth_test()["user_id"]
-
         replies = client.conversations_replies(
             channel=event["channel"], ts=thread_ts, limit=20
         )
