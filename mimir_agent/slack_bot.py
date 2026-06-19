@@ -157,6 +157,45 @@ def _download_slack_files(event: dict, token: str) -> str:
     return "\n".join(parts)
 
 
+def _resolve_slack_links(text: str, client) -> str:
+    """Expand Slack message links into their actual content.
+
+    Slack formats links as <https://workspace.slack.com/archives/C123/p456|optional label>.
+    We extract the channel + timestamp and fetch the message via the API.
+    """
+    slack_link_re = re.compile(
+        r"<(https?://[^/]+\.slack\.com/archives/([A-Z0-9]+)/p(\d+)(?:\?[^|>]*)?)(?:\|[^>]*)?>" 
+    )
+
+    def _expand(match):
+        url = match.group(1)
+        channel_id = match.group(2)
+        # Slack encodes ts as p<ts_without_dot> — insert dot before last 6 digits
+        raw_ts = match.group(3)
+        ts = raw_ts[:-6] + "." + raw_ts[-6:] if len(raw_ts) > 6 else raw_ts
+
+        try:
+            result = client.conversations_history(
+                channel=channel_id, latest=ts, inclusive=True, limit=1
+            )
+            msgs = result.get("messages", [])
+            if msgs:
+                msg_text = msgs[0].get("text", "")
+                user = msgs[0].get("user", "unknown")
+                # Try to resolve user name
+                try:
+                    info = client.users_info(user=user)
+                    user = info["user"].get("real_name") or info["user"].get("name", user)
+                except Exception:
+                    pass
+                return f"[Slack message from {user}: {msg_text}]"
+        except Exception:
+            pass
+        return url
+
+    return slack_link_re.sub(_expand, text)
+
+
 def _resolve_project(channel: str) -> str | None:
     """Look up the project for a Slack channel. Returns None if unmapped."""
     try:
@@ -200,6 +239,9 @@ def _handle(body, say, client):
             return match.group(0)
 
     user_text = re.sub(r"<@(\w+)>", _resolve_mention, user_text)
+
+    # Expand Slack message links into their content
+    user_text = _resolve_slack_links(user_text, client)
 
     # Download attached files and append their contents
     file_contents = _download_slack_files(event, config.SLACK_BOT_TOKEN)
