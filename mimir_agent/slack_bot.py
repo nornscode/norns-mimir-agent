@@ -209,7 +209,7 @@ def _resolve_slack_file_links(text: str, client) -> str:
     We fetch the file info via API and download the content.
     """
     file_link_re = re.compile(
-        r"<(https?://[^/]+\.slack\.com/files/[A-Z0-9]+/([A-Z0-9]+)/[^|>]+)(?:\|[^>]*)?>" 
+        r"(?:<)?(https?://[^/]+\.slack\.com/files/[A-Z0-9]+/([A-Z0-9]+)/[^|>\s]+)(?:\|[^>]*)?>?"
     )
 
     def _expand(match):

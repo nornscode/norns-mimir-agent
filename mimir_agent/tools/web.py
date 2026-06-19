@@ -39,9 +39,17 @@ def _fetch_one(url: str) -> str:
 
 @tool
 def read_url(urls: list[str]) -> str:
-    """Fetch one or more web pages and extract their text content. Pass a list of URLs."""
+    """Fetch one or more web pages and extract their text content. Pass a list of URLs.
+
+    Note: Slack URLs (*.slack.com) cannot be fetched this way — they require
+    authentication. Slack message and file links are automatically resolved
+    when shared in chat. Ask the user to share the link directly in Slack.
+    """
     results = []
     for url in urls:
+        if ".slack.com/" in url:
+            results.append(f"--- {url} ---\nSlack URLs require authentication and can't be fetched with read_url. The content from Slack links shared in chat is automatically resolved — if you're seeing this, the link may not have been shared directly in the Slack message.")
+            continue
         text = _fetch_one(url)
         results.append(f"--- {url} ---\n{text}")
     if not results:
