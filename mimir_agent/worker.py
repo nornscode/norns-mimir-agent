@@ -94,21 +94,6 @@ run the relevant steps for the new source(s) only.
 """
 
 
-def _patch_model_override(norns_instance: Norns, model: str):
-    """Monkey-patch Norns._handle_llm_task to override the model the server sends.
-
-    Workaround for https://github.com/nornscode/norns/issues/XXX — the server
-    resolves model aliases to stale concrete names before dispatching tasks.
-    """
-    original = norns_instance._handle_llm_task
-
-    async def patched(task: dict) -> dict:
-        task["model"] = model
-        return await original(task)
-
-    norns_instance._handle_llm_task = patched
-
-
 def main():
     from mimir_agent import db
     db.init()
@@ -125,7 +110,6 @@ def main():
     )
 
     norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
-    _patch_model_override(norns, config.MODEL)
     norns.run(agent)
 
 
