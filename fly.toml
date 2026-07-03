@@ -1,0 +1,16 @@
+app = 'mimir'
+primary_region = 'yyz'
+
+[build]
+
+[env]
+  # Norns runs in the same Fly org — use private 6PN networking.
+  NORNS_URL = 'http://norns-runtime.internal:4000'
+
+[processes]
+  app = 'uv run mimir-agent'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
