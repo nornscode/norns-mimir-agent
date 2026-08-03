@@ -188,41 +188,57 @@ def upsert_memory(key: str, content: str, embedding: list[float], project: str =
 # Memories stored under _global are always included in project-scoped searches.
 GLOBAL_PROJECT = "_global"
 
+# Recency decay: score = similarity * (floor + (1 - floor) * 2^(-age / half_life)),
+# so a stale memory loses at most (1 - RECENCY_FLOOR) of its similarity score.
+RECENCY_FLOOR = 0.7
+
+# Re-ranks the top vector-search candidates (inner query stays HNSW-friendly)
+# by similarity decayed with age. exp(-ln2 * age / half_life) == 2^(-age / half_life).
+_RANKED_SEARCH_SQL = """
+    SELECT key, content,
+           similarity * (%s + %s * exp(-0.6931471805599453 * age_days / %s)) AS score,
+           project
+    FROM (
+        SELECT key, content, project,
+               1 - (embedding <=> %s::vector) AS similarity,
+               extract(epoch FROM (NOW() - updated_at)) / 86400.0 AS age_days
+        FROM memories
+        WHERE embedding IS NOT NULL{project_filter}
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    ) AS candidates
+    ORDER BY score DESC
+    LIMIT %s
+"""
+
 
 def search_memories(
     query_embedding: list[float],
     limit: int = 10,
     project: str | None = None,
 ) -> list[tuple[str, str, float, str]]:
-    """Search memories by vector similarity. Optionally filter by project.
+    """Search memories by vector similarity with recency-decayed ranking.
 
     When project is given, searches that project + _global memories.
     When project is None, searches all projects.
-    Returns (key, content, similarity, project) tuples.
+    Returns (key, content, score, project) tuples, where score is cosine
+    similarity discounted by how long ago the memory was last updated
+    (half-life config.MEMORY_HALF_LIFE_DAYS).
     """
     conn = _get_conn()
+    candidate_pool = max(limit * 4, 40)
+    decay_params = (RECENCY_FLOOR, 1 - RECENCY_FLOOR, config.MEMORY_HALF_LIFE_DAYS)
     with conn.cursor() as cur:
         if project:
             cur.execute(
-                """
-                SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity, project
-                FROM memories
-                WHERE embedding IS NOT NULL AND project IN (%s, %s)
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-                """,
-                (query_embedding, project, GLOBAL_PROJECT, query_embedding, limit),
+                _RANKED_SEARCH_SQL.format(project_filter=" AND project IN (%s, %s)"),
+                (*decay_params, query_embedding, project, GLOBAL_PROJECT,
+                 query_embedding, candidate_pool, limit),
             )
         else:
             cur.execute(
-                """
-                SELECT key, content, 1 - (embedding <=> %s::vector) AS similarity, project
-                FROM memories
-                WHERE embedding IS NOT NULL
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-                """,
-                (query_embedding, query_embedding, limit),
+                _RANKED_SEARCH_SQL.format(project_filter=""),
+                (*decay_params, query_embedding, query_embedding, candidate_pool, limit),
             )
         results = cur.fetchall()
         if results:

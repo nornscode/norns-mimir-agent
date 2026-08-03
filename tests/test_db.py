@@ -34,6 +34,26 @@ class TestUpsertMemory:
 
 
 class TestSearchMemories:
+    def test_ranks_with_recency_decay(self):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [("key", "content", 0.9, "default")]
+        mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("mimir_agent.db._get_conn", return_value=mock_conn):
+            from mimir_agent.db import search_memories
+            search_memories([0.1, 0.2], limit=5, project="myproj")
+
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "exp(" in sql
+        assert "ORDER BY score DESC" in sql
+        # Candidate pool is wider than the requested limit
+        params = mock_cursor.execute.call_args[0][1]
+        assert 40 in params  # max(5 * 4, 40)
+        assert params[-1] == 5
+
+
     def test_returns_empty_list(self):
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

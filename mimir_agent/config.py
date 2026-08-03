@@ -25,6 +25,9 @@ FIGMA_TOKEN = os.environ.get("FIGMA_TOKEN", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "384"))
 
+# Memory ranking — the recency component of a memory's score halves every N days
+MEMORY_HALF_LIFE_DAYS = float(os.environ.get("MEMORY_HALF_LIFE_DAYS", "90"))
+
 # Model
 MODEL = os.environ.get("MIMIR_MODEL", "claude-sonnet-4-6")
 

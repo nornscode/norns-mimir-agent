@@ -1,6 +1,6 @@
 from norns import tool
 
-from mimir_agent import config, db
+from mimir_agent import config, db, injection
 from mimir_agent.embeddings import get_embedding
 
 
@@ -10,6 +10,12 @@ def remember(key: str, content: str, project: str = "default") -> str:
 
     The project parameter scopes the memory. Defaults to the current project.
     """
+    flagged = injection.scan(f"{key} {content}")
+    if flagged:
+        return (
+            f"Not stored: content failed injection screening ({flagged}). "
+            "If this is a legitimate fact, rephrase it as a plain factual statement."
+        )
     embedding = get_embedding(f"{key} {content}")
     db.upsert_memory(key, content, embedding, project=project)
     return f"Remembered: {key} (project: {project})"
