@@ -3,6 +3,33 @@
 All notable changes to Mimir are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **norns-sdk 0.2.0 → 0.8.0.** Six releases of worker-side protocol had
+  landed without Mimir taking any of them, against a core that auto-deploys
+  on every push. What was missing, worst first:
+  - **0.5.0 — worker-side prompt composition, kind rendering, `final_output`.**
+    Since the opaque-content change core writes no prose for the model and
+    expects the worker to compose the system prompt from the task envelope
+    and report `final_output`. A 0.2.0 worker does neither.
+  - **0.6.0 — compaction.** Mimir runs `mode="conversation"` with a
+    50-message window, so long Slack threads are exactly the case compaction
+    exists for, and `purpose: "compact"` tasks were unserved.
+  - **0.4.0 — graceful drain on SIGTERM.** Every Fly deploy killed
+    in-flight tool calls instead of letting them finish.
+  - **0.3.1 — concurrent task execution.** Tasks ran one at a time: a slow
+    web fetch blocked every other Slack thread on the connection.
+  - **0.8.0 — idempotency.** A tool call re-dispatched after core loses the
+    result no longer runs the side effect twice.
+
+### Fixed
+- `db._get_conn()` takes a lock. Tasks run concurrently from 0.3.1, so two
+  threads could both find the connection unset and both open one. psycopg2
+  serialises statements on a shared connection and every caller takes its
+  own cursor, so the connection itself was always safe to share — the race
+  was only in creating it.
+
 ## [0.2.0] - 2026-07-07
 
 First tagged release. The public v0.1 milestone shipped onboarding and default

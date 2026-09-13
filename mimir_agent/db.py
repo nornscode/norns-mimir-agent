@@ -1,4 +1,5 @@
 import logging
+import threading
 
 import psycopg2
 from pgvector.psycopg2 import register_vector
@@ -10,15 +11,23 @@ logger = logging.getLogger(__name__)
 _conn = None
 _initialized = False
 
+# The SDK runs tool tasks concurrently (0.3.1), so two threads can reach this
+# at once. psycopg2 serialises statements on one connection and every caller
+# below takes its own cursor, so sharing the connection is fine — what is not
+# fine is two threads both finding it None and both opening one, which leaks
+# whichever loses.
+_conn_lock = threading.Lock()
+
 
 def _get_conn():
     global _conn
-    if _conn is None or _conn.closed:
-        _conn = psycopg2.connect(config.DATABASE_URL)
-        _conn.autocommit = True
-        if _initialized:
-            register_vector(_conn)
-    return _conn
+    with _conn_lock:
+        if _conn is None or _conn.closed:
+            _conn = psycopg2.connect(config.DATABASE_URL)
+            _conn.autocommit = True
+            if _initialized:
+                register_vector(_conn)
+        return _conn
 
 
 def init():
