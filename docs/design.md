@@ -39,7 +39,7 @@ When `user_source_count() == 0`, the worker's system prompt includes an addendum
 
 - **Search quality is practical, not tuned.** GitHub code/issue search uses GitHub's native API; URL ingestion is one-shot HTML-to-text.
 - **No ingestion pipeline.** Repos and URLs are searched on demand. URLs do get persisted into memory at registration time.
-- **Single LLM provider.** `claude-sonnet-4` via the Anthropic API; no model abstraction layer.
+- **Single LLM provider.** `claude-sonnet-5` via the Anthropic API; no model abstraction layer.
 - **System prompt is built once per worker start.** Sources and onboarding state in the prompt reflect a snapshot; the LLM has `list_sources` to discover fresh state mid-conversation.
 
 ## Out of scope for v0.1

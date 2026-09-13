@@ -29,7 +29,7 @@ EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "384"))
 MEMORY_HALF_LIFE_DAYS = float(os.environ.get("MEMORY_HALF_LIFE_DAYS", "90"))
 
 # Model
-MODEL = os.environ.get("MIMIR_MODEL", "claude-sonnet-4-6")
+MODEL = os.environ.get("MIMIR_MODEL", "claude-sonnet-5")
 
 # Runtime
 DEV_MODE = os.environ.get("DEV_MODE", "").lower() in ("1", "true", "yes")

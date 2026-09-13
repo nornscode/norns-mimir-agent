@@ -23,6 +23,9 @@ All notable changes to Mimir are documented here. This project adheres to
   - **0.8.0 — idempotency.** A tool call re-dispatched after core loses the
     result no longer runs the side effect twice.
 
+- Default model `claude-sonnet-4-6` → `claude-sonnet-5`, matching the SDK's
+  own default. Override with `MIMIR_MODEL` as before.
+
 ### Fixed
 - `db._get_conn()` takes a lock. Tasks run concurrently from 0.3.1, so two
   threads could both find the connection unset and both open one. psycopg2
