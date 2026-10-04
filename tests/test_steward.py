@@ -141,6 +141,7 @@ class TestStewardTools:
             "read_github_file",
             "search_github",
             "read_url",
+            "runtime_status",
             "search_memory",
         }
 
@@ -337,3 +338,84 @@ class TestStart:
         from mimir_agent import steward_bridge
 
         assert steward_bridge.bridge() is None
+
+
+# --- looking before launching --------------------------------------------
+
+
+class TestRuntimeStatus:
+    def _status(self, agents, workers):
+        from mimir_agent.tools import runtime_status as mod
+
+        def fake_get(path):
+            if path.endswith("/agents"):
+                return agents
+            if path.endswith("/workers"):
+                return workers
+            raise AssertionError(path)
+
+        with patch.object(mod, "_get", fake_get):
+            return mod.runtime_status.handler()
+
+    def test_an_absent_coder_is_called_permanent_not_an_outage(self):
+        """The case that will actually happen: the coder is on another
+        instance entirely, so waiting for it is pointless."""
+        out = self._status(
+            agents=[{"id": 3, "name": "norns-steward", "model": "claude-opus-5"}],
+            workers=[{"worker_id": "w1", "capabilities": ["llm", "tools"], "tools": ["read_url"]}],
+        )
+        assert "NOT registered" in out
+        assert "not a temporary outage" in out
+
+    def test_a_registered_coder_with_no_workers_is_called_a_down_machine(self):
+        out = self._status(
+            agents=[{"id": 9, "name": config.STEWARD_CODER_AGENT, "model": "m"}],
+            workers=[],
+        )
+        assert "NOT registered" not in out
+        assert "no worker is connected" in out
+
+    def test_no_workers_at_all_says_nothing_can_run(self):
+        out = self._status(agents=[], workers=[])
+        assert "Nothing can run right now" in out
+
+    def test_a_served_coder_is_cleared_to_launch(self):
+        out = self._status(
+            agents=[{"id": 9, "name": config.STEWARD_CODER_AGENT, "model": "m"}],
+            workers=[{"worker_id": "w1", "capabilities": ["tools"], "tools": ["bash", "read_file"]}],
+        )
+        assert "is registered." in out
+        assert "NOT registered" not in out
+
+    def test_an_unreadable_agents_endpoint_is_reported_not_raised(self):
+        from mimir_agent.tools import runtime_status as mod
+
+        def boom(path):
+            raise RuntimeError("connection refused")
+
+        with patch.object(mod, "_get", boom):
+            out = mod.runtime_status.handler()
+        assert "Could not read agents" in out
+
+
+class TestHandoffContract:
+    def test_the_steward_can_list_agents_before_launching(self):
+        """It cannot check what exists if listing is denied."""
+        assert steward.build().subagents["allow_list_agents"] is True
+
+    def test_the_prompt_names_all_three_handoff_cases(self):
+        p = steward.SYSTEM_PROMPT
+        assert "not registered on this runtime" in p
+        assert "registered but no worker is connected" in p
+        assert "A worker is serving it" in p
+
+    def test_the_prompt_does_not_promise_that_work_queues(self):
+        """It does not: an unserved tool task fails the run on the
+        five-minute timeout."""
+        assert "queue in Norns until it is" not in steward.SYSTEM_PROMPT
+        assert "five-minute timeout" in steward.SYSTEM_PROMPT
+
+    def test_an_unexecutable_plan_is_banked_for_the_next_run(self):
+        p = steward.SYSTEM_PROMPT
+        assert "approved_pending_<date>" in p
+        assert "approved_pending" in p

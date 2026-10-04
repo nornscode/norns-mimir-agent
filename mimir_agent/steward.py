@@ -27,6 +27,7 @@ from mimir_agent.tools.github import (
 )
 from mimir_agent.tools.issues import list_github_issues, read_github_issue
 from mimir_agent.tools.memory import remember, search_memory
+from mimir_agent.tools.runtime_status import runtime_status
 from mimir_agent.tools.web import read_url
 
 # Read and remember. No writes: a 6am run must not be able to change code
@@ -42,6 +43,7 @@ STEWARD_TOOLS = [
     read_github_file,
     search_github,
     read_url,
+    runtime_status,
     search_memory,
     remember,
 ]
@@ -163,18 +165,36 @@ including what was declined and the reason given. If something was \
 rejected on a principle rather than on timing, also store it under \
 `rejected_<slug>` so future runs see it.
 
-Then hand the work over. You have no write tools: `launch_agent` the coding \
-agent `{coder}`, one work item per launch, with a brief that names the repo, \
-the file paths you already found, the acceptance check, and the constraint \
-that it must not push to `main` without asking. Wait for each to come back \
-before starting the next — serial, so a bad first result stops the rest.
+**Then call `runtime_status` before you hand anything over.** Work given to \
+an agent nothing is serving does not wait politely in a queue: the child \
+run's first LLM task goes unanswered and it fails on a five-minute timeout. \
+Checking costs one tool call. There are three cases and they are different:
 
-If `{coder}` is not connected, its tasks queue in Norns until it is. That is \
-working as intended, not a failure: say that the work is queued for the next \
-time the machine is up, and stop. Do not try to do the work yourself.
+1. **`{coder}` is not registered on this runtime.** It cannot be launched \
+here at all, and waiting will not change that. Say so plainly, say the plan \
+is recorded and needs that agent connected, and stop. Store the approved \
+plan under `approved_pending_<date>` so the next run can offer to pick it up.
+2. **`{coder}` is registered but no worker is connected.** The machine is \
+down. Same action: record under `approved_pending_<date>`, say it is waiting \
+on the machine, and stop. Do not launch on the chance it comes back.
+3. **A worker is serving it.** Go ahead.
+
+In case 3, `launch_agent` `{coder}` once per work item, with a brief that \
+names the repo, the file paths you already found, the acceptance check, and \
+the constraint that it must not push to `main` without asking. Wait for each \
+to come back before starting the next — serial, so a bad first result stops \
+the rest.
+
+You have no write tools. If the coder cannot run, the work does not happen \
+this cycle; do not look for another way to do it yourself.
 
 When every item is done, report in at most 100 words: what landed, what \
-failed, what is still queued. `remember` it under `shipped_<slug>`.
+failed, what is recorded for later. `remember` it under `shipped_<slug>`.
+
+At the **start** of a planning run, also `search_memory` for \
+`approved_pending` — if a previous run banked an approved plan it could not \
+execute, offering to run it now is almost always a better proposal than \
+anything new.
 
 # Tone
 
@@ -214,7 +234,9 @@ def build(model: str | None = None):
         subagents={
             "mode": "allowlist",
             "allowed_agents": [config.STEWARD_CODER_AGENT],
-            "allow_list_agents": False,
+            # It may look at what exists before launching into it. Listing is
+            # read-only; the allowlist above is what limits what it can start.
+            "allow_list_agents": True,
             "max_depth": 1,
         },
     )
