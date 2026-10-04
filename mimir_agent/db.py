@@ -153,18 +153,39 @@ def init():
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS steward_asks (
-                run_id BIGINT PRIMARY KEY,
+                run_id BIGINT NOT NULL,
+                tool_call_id TEXT NOT NULL DEFAULT '',
                 channel TEXT NOT NULL,
                 thread_ts TEXT NOT NULL,
                 question TEXT NOT NULL,
                 posted_at TIMESTAMPTZ DEFAULT NOW(),
                 answered_at TIMESTAMPTZ,
-                reported_at TIMESTAMPTZ
+                reported_at TIMESTAMPTZ,
+                PRIMARY KEY (run_id, tool_call_id)
             )
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS steward_asks_thread_idx
             ON steward_asks (channel, thread_ts)
+        """)
+        # A run keyed on its own id could only ever be posted once, so a
+        # second question from the same run went nowhere and the person who
+        # had answered the first saw silence. The question is the thing that
+        # gets posted once, and `tool_call_id` is what names a question.
+        cur.execute("""
+            ALTER TABLE steward_asks ADD COLUMN IF NOT EXISTS tool_call_id TEXT NOT NULL DEFAULT ''
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'steward_asks_pkey' AND array_length(conkey, 1) = 1
+                ) THEN
+                    ALTER TABLE steward_asks DROP CONSTRAINT steward_asks_pkey;
+                    ALTER TABLE steward_asks ADD PRIMARY KEY (run_id, tool_call_id);
+                END IF;
+            END $$;
         """)
 
     _backfill_embeddings()
@@ -455,26 +476,31 @@ def list_projects() -> list[tuple[str, str | None]]:
 # the same proposal every twenty seconds.
 
 
-def record_steward_ask(run_id: int, channel: str, thread_ts: str, question: str) -> bool:
-    """Claim a run as posted. False if it was already claimed, which is how
-    two pollers racing on the same run resolve to one Slack message."""
+def record_steward_ask(
+    run_id: int, tool_call_id: str, channel: str, thread_ts: str, question: str
+) -> bool:
+    """Claim one question as posted. False if it was already claimed, which is
+    how two pollers racing on the same question resolve to one Slack message."""
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO steward_asks (run_id, channel, thread_ts, question)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (run_id) DO NOTHING
+            INSERT INTO steward_asks (run_id, tool_call_id, channel, thread_ts, question)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (run_id, tool_call_id) DO NOTHING
             """,
-            (run_id, channel, thread_ts, question),
+            (run_id, tool_call_id, channel, thread_ts, question),
         )
         return cur.rowcount > 0
 
 
-def steward_ask_posted(run_id: int) -> bool:
+def steward_ask_posted(run_id: int, tool_call_id: str) -> bool:
     conn = _get_conn()
     with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM steward_asks WHERE run_id = %s", (run_id,))
+        cur.execute(
+            "SELECT 1 FROM steward_asks WHERE run_id = %s AND tool_call_id = %s",
+            (run_id, tool_call_id),
+        )
         return cur.fetchone() is not None
 
 
@@ -500,7 +526,10 @@ def steward_thread_for_run(run_id: int) -> str | None:
     """The Slack thread a run's question was posted in, if it was posted."""
     conn = _get_conn()
     with conn.cursor() as cur:
-        cur.execute("SELECT thread_ts FROM steward_asks WHERE run_id = %s", (run_id,))
+        cur.execute(
+            "SELECT thread_ts FROM steward_asks WHERE run_id = %s ORDER BY posted_at LIMIT 1",
+            (run_id,),
+        )
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -509,7 +538,9 @@ def mark_steward_ask_answered(run_id: int) -> None:
     conn = _get_conn()
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE steward_asks SET answered_at = NOW() WHERE run_id = %s", (run_id,)
+            "UPDATE steward_asks SET answered_at = NOW() "
+            "WHERE run_id = %s AND answered_at IS NULL",
+            (run_id,),
         )
 
 
@@ -532,9 +563,9 @@ def steward_asks_awaiting_report() -> list[tuple[int, str, str]]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT run_id, channel, thread_ts FROM steward_asks
+            SELECT DISTINCT ON (run_id) run_id, channel, thread_ts FROM steward_asks
             WHERE answered_at IS NOT NULL AND reported_at IS NULL
-            ORDER BY answered_at
+            ORDER BY run_id, answered_at DESC
             """
         )
         return cur.fetchall()

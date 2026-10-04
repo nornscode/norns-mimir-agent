@@ -22,12 +22,15 @@ class FakeAsks:
     """The steward_asks table, in a dict."""
 
     def __init__(self):
-        self.rows: dict[int, dict] = {}
+        # Keyed the way the table is: one row per question, not per run.
+        self.rows: dict[tuple[int, str], dict] = {}
 
-    def record(self, run_id, channel, thread_ts, question):
-        if run_id in self.rows:
+    def record(self, run_id, tool_call_id, channel, thread_ts, question):
+        key = (run_id, tool_call_id)
+        if key in self.rows:
             return False
-        self.rows[run_id] = {
+        self.rows[key] = {
+            "run_id": run_id,
             "channel": channel,
             "thread_ts": thread_ts,
             "question": question,
@@ -36,43 +39,48 @@ class FakeAsks:
         }
         return True
 
-    def posted(self, run_id):
-        return run_id in self.rows
+    def posted(self, run_id, tool_call_id):
+        return (run_id, tool_call_id) in self.rows
+
+    def row(self, run_id):
+        """The one row a single-question run has, for assertions."""
+        return next(r for r in self.rows.values() if r["run_id"] == run_id)
 
     def for_thread(self, channel, thread_ts):
-        unanswered = [
-            rid for rid, r in self.rows.items()
-            if r["channel"] == channel and r["thread_ts"] == thread_ts and not r["answered"]
-        ]
+        here = [r for r in self.rows.values() if r["channel"] == channel and r["thread_ts"] == thread_ts]
+        unanswered = [r for r in here if not r["answered"]]
         if unanswered:
             # The real query orders posted_at DESC among unanswered rows, so
             # a child's question beats its parent's in a shared thread.
-            return unanswered[-1]
-        any_match = [
-            rid for rid, r in self.rows.items()
-            if r["channel"] == channel and r["thread_ts"] == thread_ts
-        ]
-        return any_match[0] if any_match else None
+            return unanswered[-1]["run_id"]
+        return here[0]["run_id"] if here else None
 
     def thread_for_run(self, run_id):
-        row = self.rows.get(run_id)
-        return row["thread_ts"] if row else None
+        for r in self.rows.values():
+            if r["run_id"] == run_id:
+                return r["thread_ts"]
+        return None
 
     def mark_answered(self, run_id):
-        self.rows[run_id]["answered"] = True
+        for r in self.rows.values():
+            if r["run_id"] == run_id and not r["answered"]:
+                r["answered"] = True
 
     def awaiting_report(self):
-        return [
-            (rid, r["channel"], r["thread_ts"])
-            for rid, r in self.rows.items()
-            if r["answered"] and not r["reported"]
-        ]
+        seen, out = set(), []
+        for r in self.rows.values():
+            if r["answered"] and not r["reported"] and r["run_id"] not in seen:
+                seen.add(r["run_id"])
+                out.append((r["run_id"], r["channel"], r["thread_ts"]))
+        return out
 
     def mark_reported(self, run_id):
-        self.rows[run_id]["reported"] = True
+        for r in self.rows.values():
+            if r["run_id"] == run_id:
+                r["reported"] = True
 
 
-def fake_run(run_id, status, question=None, output=None, agent_id=1, age_hours=0):
+def fake_run(run_id, status, question=None, output=None, agent_id=1, age_hours=0, tool_call_id=None):
     run = MagicMock()
     run.inserted_at = (
         datetime.now(timezone.utc) - timedelta(hours=age_hours)
@@ -87,6 +95,7 @@ def fake_run(run_id, status, question=None, output=None, agent_id=1, age_hours=0
     else:
         run.waiting_for = MagicMock()
         run.waiting_for.question = question
+        run.waiting_for.tool_call_id = tool_call_id or f"call_{run_id}"
     return run
 
 
@@ -190,7 +199,7 @@ class TestPostWaiting:
         text = slack.chat_postMessage.call_args.kwargs["text"]
         assert "Ship A or B?" in text
         assert "42" in text
-        assert asks.posted(42)
+        assert asks.posted(42, "call_42")
 
     def test_it_is_not_posted_twice(self, bridge, slack, norns, asks):
         norns.list_runs.return_value = [fake_run(42, "waiting", question="Ship A or B?")]
@@ -212,7 +221,7 @@ class TestPostWaiting:
         slack.chat_postMessage.side_effect = RuntimeError("slack down")
 
         assert bridge.post_waiting() == 0
-        assert not asks.posted(42)
+        assert not asks.posted(42, "call_42")
 
         slack.chat_postMessage.side_effect = None
         slack.chat_postMessage.return_value = {"ts": "1.1"}
@@ -238,7 +247,7 @@ class TestPostWaiting:
         bridge.post_waiting()
         parent_ts = slack.chat_postMessage.call_args.kwargs.get("thread_ts")
         assert parent_ts is None  # the proposal opens the thread
-        thread = asks.rows[42]["thread_ts"]
+        thread = asks.thread_for_run(42)
 
         norns._request.return_value.json.return_value = {"data": {"parent_run_id": 42}}
         norns.list_runs.return_value = [
@@ -249,6 +258,35 @@ class TestPostWaiting:
 
         # And the reply goes to the child, which is what is actually waiting.
         assert asks.for_thread("C_STEWARD", thread) == 55
+
+    def test_a_second_question_from_the_same_run_is_posted_too(self, bridge, slack, norns, asks):
+        # The table was keyed on run_id, so a run only ever got its first
+        # question posted. You answered it, the run carried on, asked again,
+        # and the thread went silent with the run parked out of sight.
+        norns.list_runs.return_value = [
+            fake_run(42, "waiting", question="Allow bash `mix test`?", tool_call_id="p-1")
+        ]
+        assert bridge.post_waiting() == 1
+        thread = asks.thread_for_run(42)
+        asks.mark_answered(42)
+
+        norns.list_runs.return_value = [
+            fake_run(42, "waiting", question="Allow bash `python3 -c ...`?", tool_call_id="p-2")
+        ]
+        assert bridge.post_waiting() == 1
+        assert "python3" in slack.chat_postMessage.call_args.kwargs["text"]
+        # Same thread, so the conversation stays in one place.
+        assert slack.chat_postMessage.call_args.kwargs["thread_ts"] == thread
+        # And the reply routes to the question still open.
+        assert asks.for_thread("C_STEWARD", thread) == 42
+
+    def test_the_same_question_is_still_only_posted_once(self, bridge, slack, norns, asks):
+        norns.list_runs.return_value = [
+            fake_run(42, "waiting", question="Allow bash `mix test`?", tool_call_id="p-1")
+        ]
+        assert bridge.post_waiting() == 1
+        assert bridge.post_waiting() == 0
+        assert slack.chat_postMessage.call_count == 1
 
     def test_a_question_parked_for_days_is_not_backfilled(self, bridge, slack, norns, asks):
         norns.list_runs.return_value = [
@@ -285,7 +323,7 @@ class TestAnswer:
         norns.get_run.return_value = fake_run(42, "waiting", question="Ship A or B?")
 
         bridge.answer(channel, ts, "do A")
-        assert asks.rows[42]["answered"] is True
+        assert asks.row(42)["answered"] is True
 
     def test_an_unknown_thread_is_not_ours(self, bridge, norns, asks):
         """None tells the Slack handler to treat it as a normal message."""
@@ -308,7 +346,7 @@ class TestAnswer:
         norns.reply.side_effect = RuntimeError("boom")
 
         assert bridge.answer(channel, ts, "do A") == 42
-        assert asks.rows[42]["answered"] is False
+        assert asks.row(42)["answered"] is False
         assert "couldn't deliver" in slack.chat_postMessage.call_args.kwargs["text"]
 
     def test_an_unreadable_run_still_claims_its_thread(self, bridge, slack, norns, asks):
@@ -341,7 +379,7 @@ class TestReportFinished:
         kwargs = slack.chat_postMessage.call_args.kwargs
         assert kwargs["thread_ts"] == "1700000000.000100"
         assert "Landed the gard fix." in kwargs["text"]
-        assert asks.rows[42]["reported"] is True
+        assert asks.row(42)["reported"] is True
 
     def test_it_reports_once(self, bridge, norns, asks):
         self._answered(bridge, norns, asks)
@@ -362,7 +400,7 @@ class TestReportFinished:
         norns.get_run.return_value = fake_run(42, "running")
 
         assert bridge.report_finished() == 0
-        assert asks.rows[42]["reported"] is False
+        assert asks.row(42)["reported"] is False
 
     def test_a_follow_up_question_keeps_the_row_open(self, bridge, norns, asks):
         """The agent may ask again after an answer. That is a new question on
@@ -371,7 +409,7 @@ class TestReportFinished:
         norns.get_run.return_value = fake_run(42, "waiting", question="Also bump the SDK?")
 
         assert bridge.report_finished() == 0
-        assert asks.rows[42]["reported"] is False
+        assert asks.row(42)["reported"] is False
 
 
 # --- configuration -------------------------------------------------------

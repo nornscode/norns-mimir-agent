@@ -93,17 +93,20 @@ class StewardBridge:
         for run in runs:
             if not run.waiting_for or not run.waiting_for.question:
                 continue
-            if db.steward_ask_posted(run.run_id):
+            if db.steward_ask_posted(run.run_id, run.waiting_for.tool_call_id):
                 continue
             if self._too_old(run):
                 logger.info(f"skipping run {run.run_id}, parked since {run.inserted_at}")
                 continue
-            parent_ts = self._parent_thread(run.run_id)
+            # A run that asks twice keeps its own thread for the second
+            # question; only its first ask goes under the parent's.
+            thread = db.steward_thread_for_run(run.run_id) or self._parent_thread(run.run_id)
             if self._post_one(
                 run.run_id,
+                run.waiting_for.tool_call_id,
                 run.waiting_for.question,
                 label=self._label(run.agent_id),
-                thread_ts=parent_ts,
+                thread_ts=thread,
             ):
                 posted += 1
         return posted
@@ -159,6 +162,7 @@ class StewardBridge:
     def _post_one(
         self,
         run_id: int,
+        tool_call_id: str,
         question: str,
         label: str = "Norns steward",
         thread_ts: str | None = None,
@@ -183,7 +187,7 @@ class StewardBridge:
         # that is marked posted and was never seen, which is the one failure
         # here with no way back — the run would park forever.
         try:
-            db.record_steward_ask(run_id, self.channel, thread_ts, question)
+            db.record_steward_ask(run_id, tool_call_id, self.channel, thread_ts, question)
         except Exception as e:
             logger.error(f"posted run {run_id} to Slack but could not record it: {e}")
             try:
