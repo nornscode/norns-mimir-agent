@@ -21,6 +21,7 @@ messages.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -32,6 +33,9 @@ logger = logging.getLogger("mimir_agent.steward")
 
 # Slack rejects a message over 40k; a proposal should be nowhere near this.
 MAX_SLACK_TEXT = 3500
+
+# Slack channel IDs: C public/private, G legacy group, D direct message.
+_CHANNEL_ID = re.compile(r"^[CGD][A-Z0-9]{6,}$")
 
 
 def _truncate(text: str, limit: int = MAX_SLACK_TEXT) -> str:
@@ -255,6 +259,19 @@ def start(slack_client) -> StewardBridge | None:
 
     if not config.STEWARD_SLACK_CHANNEL:
         logger.info("STEWARD_SLACK_CHANNEL not set, steward bridge disabled")
+        return None
+
+    channel = config.STEWARD_SLACK_CHANNEL
+    if not _CHANNEL_ID.match(channel):
+        # A channel name would post fine and then strand every approval.
+        # Slack events report `channel` as an ID, so the thread row we
+        # write under a name can never be matched to the reply that comes
+        # back, and the run parks until someone notices by hand.
+        logger.error(
+            f"STEWARD_SLACK_CHANNEL={channel!r} is not a channel ID, steward bridge "
+            "disabled. Use the ID (Slack: channel name -> View channel details, "
+            "bottom of the About tab)."
+        )
         return None
 
     _bridge = StewardBridge(slack_client, channel=config.STEWARD_SLACK_CHANNEL)

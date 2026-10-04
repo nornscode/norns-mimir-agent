@@ -339,6 +339,25 @@ class TestStart:
 
         assert steward_bridge.bridge() is None
 
+    def test_a_channel_name_is_refused_rather_than_stranding_approvals(self, slack):
+        # Posting into "#norns" works; the reply never routes back, because
+        # Slack events report the channel as an ID. Off is better than that.
+        from mimir_agent import steward_bridge
+
+        for name in ("#norns", "norns", "general"):
+            with patch.object(config, "STEWARD_SLACK_CHANNEL", name):
+                assert steward_bridge.start(slack) is None, name
+        slack.chat_postMessage.assert_not_called()
+
+    def test_a_channel_id_starts_the_bridge(self, slack):
+        from mimir_agent import steward_bridge
+
+        with patch.object(config, "STEWARD_SLACK_CHANNEL", "C01ABC2DEF3"):
+            with patch.object(steward_bridge.threading, "Thread") as thread:
+                b = steward_bridge.start(slack)
+        assert b is not None and b.channel == "C01ABC2DEF3"
+        assert thread.called
+
 
 # --- looking before launching --------------------------------------------
 

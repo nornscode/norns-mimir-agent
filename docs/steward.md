@@ -82,7 +82,7 @@ finds the same parked run and the row saying it was already posted.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `STEWARD_SLACK_CHANNEL` | — | Channel id for proposals. **Unset disables the steward bridge entirely.** |
+| `STEWARD_SLACK_CHANNEL` | — | Channel **ID** for proposals, e.g. `C01ABC2DEF3` — not the name. Slack reports the ID on incoming replies, so a name posts the question and then strands the reply; the bridge refuses to start on one. **Unset disables the steward bridge entirely.** |
 | `STEWARD_AGENT` | `norns-steward` | Agent name to register and watch. |
 | `STEWARD_MODEL` | `claude-opus-5` | The planning run is judgment-heavy and runs once a day. |
 | `STEWARD_CODER_AGENT` | `sleipnir` | The only agent it may launch. |
