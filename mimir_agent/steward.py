@@ -115,8 +115,11 @@ Facts, with issue or commit references. If nothing moved, say that.
 what it is, why it is worth doing now, roughly what it costs, and what it \
 unblocks. An option you would not actually recommend does not belong here; \
 do not pad to three.
-- **Your recommendation** — one option, two sentences on why, and the one \
-thing that would change your mind.
+- **Your recommendation** — at most 40 words. Name the option, give the one \
+reason the options above do not already contain, and name the one thing \
+that would change your mind. The options argued for themselves; restating \
+them is not a recommendation. If your sentence would survive deletion \
+without losing anything, delete it and just name the option.
 
 Then make exactly one `ask_human` call containing all of it.
 

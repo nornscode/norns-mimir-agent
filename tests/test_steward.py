@@ -363,7 +363,7 @@ class TestStart:
 
 
 class TestRuntimeStatus:
-    def _status(self, agents, workers):
+    def _status(self, agents, workers, catalog=None):
         from mimir_agent.tools import runtime_status as mod
 
         def fake_get(path):
@@ -371,10 +371,28 @@ class TestRuntimeStatus:
                 return agents
             if path.endswith("/workers"):
                 return workers
+            if path.endswith("/tools"):
+                return catalog or []
             raise AssertionError(path)
 
         with patch.object(mod, "_get", fake_get):
             return mod.runtime_status.handler()
+
+    def test_it_reads_the_field_the_api_actually_returns(self):
+        # The workers endpoint sends tool_count and gard. Reading "tools"
+        # and "gard_id" reported every worker as serving nothing.
+        out = self._status(
+            [{"id": 1, "name": "sleipnir", "model": "m"}],
+            [{"worker_id": "w1", "capabilities": ["tools"], "tool_count": 22, "gard": 4}],
+            catalog=[
+                {"name": "wait", "source": "builtin"},
+                {"name": "bash", "source": "worker"},
+            ],
+        )
+        assert "tools=22" in out
+        assert "tools=0" not in out
+        assert "gard=4" in out
+        assert "bash" in out and "wait" not in out.split("are being served")[-1]
 
     def test_an_absent_coder_is_called_permanent_not_an_outage(self):
         """The case that will actually happen: the coder is on another

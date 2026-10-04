@@ -29,7 +29,9 @@ def _get(path: str) -> list[dict]:
         timeout=TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json().get("data", [])
+    body = resp.json()
+    # /api/v1/tools answers with a bare list; the others wrap theirs in "data".
+    return body if isinstance(body, list) else body.get("data", [])
 
 
 @tool
@@ -58,17 +60,17 @@ def runtime_status() -> str:
     for a in sorted(agents, key=lambda a: a.get("name") or ""):
         lines.append(f"  {a.get('id')}  {a.get('name')}  ({a.get('model')})")
 
-    served: set[str] = set()
     lines.append("")
     if workers:
         lines.append("Workers connected:")
         for w in workers:
             caps = ",".join(w.get("capabilities") or []) or "none"
-            tools = w.get("tools") or []
-            served.update(tools)
-            gard = w.get("gard_id")
+            gard = w.get("gard")
             where = f" gard={gard}" if gard else ""
-            lines.append(f"  {w.get('worker_id')}  capabilities={caps}{where}  tools={len(tools)}")
+            lines.append(
+                f"  {w.get('worker_id')}  capabilities={caps}{where}  "
+                f"tools={w.get('tool_count', 0)}"
+            )
     else:
         lines.append("Workers connected: none.")
         lines.append(
@@ -87,9 +89,17 @@ def runtime_status() -> str:
     elif not workers:
         lines.append(f"'{coder}' is registered, but no worker is connected to serve it.")
     else:
-        lines.append(
-            f"'{coder}' is registered. Whether a worker provides its tools is in the "
-            f"tool counts above; {len(served)} distinct tools are being served."
-        )
+        try:
+            catalog = _get("/api/v1/tools")
+        except Exception as e:
+            lines.append(f"'{coder}' is registered, but the tool catalog did not read: {e}")
+        else:
+            worker_tools = sorted(
+                t.get("name", "") for t in catalog if t.get("source") != "builtin"
+            )
+            lines.append(
+                f"'{coder}' is registered. {len(worker_tools)} worker-provided tools "
+                f"are being served: {', '.join(worker_tools) or 'none'}."
+            )
 
     return "\n".join(lines) + worker_note
