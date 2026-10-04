@@ -496,6 +496,15 @@ def steward_run_for_thread(channel: str, thread_ts: str) -> int | None:
         return row[0] if row else None
 
 
+def steward_thread_for_run(run_id: int) -> str | None:
+    """The Slack thread a run's question was posted in, if it was posted."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT thread_ts FROM steward_asks WHERE run_id = %s", (run_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def mark_steward_ask_answered(run_id: int) -> None:
     conn = _get_conn()
     with conn.cursor() as cur:

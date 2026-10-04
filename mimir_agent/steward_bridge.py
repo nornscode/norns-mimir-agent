@@ -24,6 +24,7 @@ import logging
 import re
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 from norns import NornsClient
 
@@ -36,6 +37,12 @@ MAX_SLACK_TEXT = 3500
 
 # Slack channel IDs: C public/private, G legacy group, D direct message.
 _CHANNEL_ID = re.compile(r"^[CGD][A-Z0-9]{6,}$")
+
+# A question older than this has never been posted and nobody is sitting on
+# it. Without the cutoff, pointing the bridge at a runtime with history
+# dumps every run that ever parked into the channel at once. In normal
+# operation a run parks and is posted within one poll, so this never bites.
+MAX_ASK_AGE_HOURS = 24
 
 
 def _truncate(text: str, limit: int = MAX_SLACK_TEXT) -> str:
@@ -52,6 +59,7 @@ class StewardBridge:
         self.norns = norns_client or NornsClient(config.NORNS_URL, api_key=config.NORNS_API_KEY)
         self.channel = channel or config.STEWARD_SLACK_CHANNEL
         self._agent_id: int | None = None
+        self._agent_names: dict[int, str] | None = None
 
     # --- agent resolution -------------------------------------------------
 
@@ -69,13 +77,14 @@ class StewardBridge:
     # --- outbound: a parked run becomes a Slack thread --------------------
 
     def post_waiting(self) -> int:
-        """Post any steward question not yet in Slack. Returns how many."""
-        agent_id = self.agent_id()
-        if agent_id is None:
-            return 0
+        """Post any parked question not yet in Slack. Returns how many.
 
+        Every waiting run, not just the steward's. A coder the steward hands
+        work to parks the same way on a permission prompt, and a parked run
+        nobody can see is the babysitting this is supposed to remove.
+        """
         try:
-            runs = self.norns.list_runs(limit=100, status="waiting", agent_id=agent_id)
+            runs = self.norns.list_runs(limit=100, status="waiting")
         except Exception as e:
             logger.warning(f"could not list waiting runs: {e}")
             return 0
@@ -86,20 +95,86 @@ class StewardBridge:
                 continue
             if db.steward_ask_posted(run.run_id):
                 continue
-            if self._post_one(run.run_id, run.waiting_for.question):
+            if self._too_old(run):
+                logger.info(f"skipping run {run.run_id}, parked since {run.inserted_at}")
+                continue
+            parent_ts = self._parent_thread(run.run_id)
+            if self._post_one(
+                run.run_id,
+                run.waiting_for.question,
+                label=self._label(run.agent_id),
+                thread_ts=parent_ts,
+            ):
                 posted += 1
         return posted
 
-    def _post_one(self, run_id: int, question: str) -> bool:
+    def _too_old(self, run) -> bool:
+        started = run.inserted_at
+        if not isinstance(started, str):
+            return False
+        try:
+            when = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - when > timedelta(hours=MAX_ASK_AGE_HOURS)
+
+    def _label(self, agent_id: int | None) -> str:
+        """The agent's name, for the header. Falls back to the id."""
+        if self._agent_names is None:
+            try:
+                self._agent_names = {a.id: a.name for a in self.norns.list_agents()}
+            except Exception as e:
+                logger.debug(f"could not list agents: {e}")
+                return f"agent {agent_id}"
+        name = self._agent_names.get(agent_id)
+        if name == config.STEWARD_AGENT:
+            return "Norns steward"
+        return name or f"agent {agent_id}"
+
+    def _parent_thread(self, run_id: int) -> str | None:
+        """The Slack thread of this run's parent, when it has one we posted.
+
+        A coder's permission question belongs under the proposal that
+        approved it, not in a thread of its own with no context.
+
+        RunResponse carries no parent_run_id yet, so this reads the run
+        directly. It should move into the SDK.
+        """
+        try:
+            data = self.norns._request("GET", f"/api/v1/runs/{run_id}").json()["data"]
+        except Exception as e:
+            logger.debug(f"could not read run {run_id} for its parent: {e}")
+            return None
+        parent = data.get("parent_run_id")
+        if not parent:
+            return None
+        try:
+            return db.steward_thread_for_run(parent)
+        except Exception as e:
+            logger.debug(f"could not look up thread for parent run {parent}: {e}")
+            return None
+
+    def _post_one(
+        self,
+        run_id: int,
+        question: str,
+        label: str = "Norns steward",
+        thread_ts: str | None = None,
+    ) -> bool:
         from mimir_agent.slack_bot import to_slack_mrkdwn
 
-        header = f":thread: *Norns steward* — run `{run_id}`\n\n"
+        header = f":thread: *{label}* — run `{run_id}`\n\n"
         try:
             resp = self.slack.chat_postMessage(
                 channel=self.channel,
                 text=_truncate(header + to_slack_mrkdwn(question)),
+                **({"thread_ts": thread_ts} if thread_ts else {}),
             )
-            thread_ts = resp["ts"]
+            # In a parent's thread the reply key stays the parent's ts, so a
+            # reply lands on the thread the user is actually looking at.
+            thread_ts = thread_ts or resp["ts"]
         except Exception as e:
             logger.error(f"could not post steward question for run {run_id}: {e}")
             return False
@@ -234,7 +309,7 @@ class StewardBridge:
 
     def run_forever(self, interval: int | None = None) -> None:
         interval = interval or config.STEWARD_POLL_SECONDS
-        logger.info(f"steward bridge watching {config.STEWARD_AGENT} → {self.channel} every {interval}s")
+        logger.info(f"steward bridge watching every parked run → {self.channel} every {interval}s")
         while True:
             try:
                 self.poll_once()

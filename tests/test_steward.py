@@ -9,6 +9,7 @@ the ones that only show up on the second poll.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from mimir_agent import config, steward
 from mimir_agent.steward_bridge import StewardBridge
@@ -44,12 +45,18 @@ class FakeAsks:
             if r["channel"] == channel and r["thread_ts"] == thread_ts and not r["answered"]
         ]
         if unanswered:
-            return unanswered[0]
+            # The real query orders posted_at DESC among unanswered rows, so
+            # a child's question beats its parent's in a shared thread.
+            return unanswered[-1]
         any_match = [
             rid for rid, r in self.rows.items()
             if r["channel"] == channel and r["thread_ts"] == thread_ts
         ]
         return any_match[0] if any_match else None
+
+    def thread_for_run(self, run_id):
+        row = self.rows.get(run_id)
+        return row["thread_ts"] if row else None
 
     def mark_answered(self, run_id):
         self.rows[run_id]["answered"] = True
@@ -65,8 +72,11 @@ class FakeAsks:
         self.rows[run_id]["reported"] = True
 
 
-def fake_run(run_id, status, question=None, output=None, agent_id=1):
+def fake_run(run_id, status, question=None, output=None, agent_id=1, age_hours=0):
     run = MagicMock()
+    run.inserted_at = (
+        datetime.now(timezone.utc) - timedelta(hours=age_hours)
+    ).isoformat().replace("+00:00", "Z")
     run.run_id = run_id
     run.status = status
     run.output = output
@@ -88,6 +98,7 @@ def asks():
         record_steward_ask=store.record,
         steward_ask_posted=store.posted,
         steward_run_for_thread=store.for_thread,
+        steward_thread_for_run=store.thread_for_run,
         mark_steward_ask_answered=store.mark_answered,
         steward_asks_awaiting_report=store.awaiting_report,
         mark_steward_ask_reported=store.mark_reported,
@@ -207,18 +218,44 @@ class TestPostWaiting:
         slack.chat_postMessage.return_value = {"ts": "1.1"}
         assert bridge.post_waiting() == 1
 
-    def test_it_only_looks_at_the_stewards_runs(self, bridge, norns, asks):
+    def test_it_looks_at_every_agents_parked_runs(self, bridge, norns, asks):
         bridge.post_waiting()
         kwargs = norns.list_runs.call_args.kwargs
         assert kwargs["status"] == "waiting"
-        assert kwargs["agent_id"] == 1
+        # Filtering by the steward hid exactly the runs worth seeing: a coder
+        # parked on a permission prompt with nobody watching.
+        assert "agent_id" not in kwargs
 
-    def test_nothing_happens_before_the_agent_is_registered(self, bridge, norns, asks):
-        norns.get_agent.side_effect = RuntimeError("404")
-        bridge._agent_id = None
+    def test_a_coders_permission_question_is_posted_too(self, bridge, slack, norns, asks):
+        norns.list_runs.return_value = [
+            fake_run(55, "waiting", question="Run `mix test`?", agent_id=9)
+        ]
+        assert bridge.post_waiting() == 1
+        assert "Run `mix test`?" in slack.chat_postMessage.call_args.kwargs["text"]
 
+    def test_a_child_question_lands_in_its_parents_thread(self, bridge, slack, norns, asks):
+        norns.list_runs.return_value = [fake_run(42, "waiting", question="Ship A or B?")]
+        bridge.post_waiting()
+        parent_ts = slack.chat_postMessage.call_args.kwargs.get("thread_ts")
+        assert parent_ts is None  # the proposal opens the thread
+        thread = asks.rows[42]["thread_ts"]
+
+        norns._request.return_value.json.return_value = {"data": {"parent_run_id": 42}}
+        norns.list_runs.return_value = [
+            fake_run(55, "waiting", question="Run `mix test`?", agent_id=9)
+        ]
+        assert bridge.post_waiting() == 1
+        assert slack.chat_postMessage.call_args.kwargs["thread_ts"] == thread
+
+        # And the reply goes to the child, which is what is actually waiting.
+        assert asks.for_thread("C_STEWARD", thread) == 55
+
+    def test_a_question_parked_for_days_is_not_backfilled(self, bridge, slack, norns, asks):
+        norns.list_runs.return_value = [
+            fake_run(42, "waiting", question="old news", age_hours=72)
+        ]
         assert bridge.post_waiting() == 0
-        norns.list_runs.assert_not_called()
+        slack.chat_postMessage.assert_not_called()
 
     def test_a_long_question_is_truncated(self, bridge, slack, norns, asks):
         norns.list_runs.return_value = [fake_run(42, "waiting", question="x" * 9000)]

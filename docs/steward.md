@@ -62,8 +62,16 @@ to look at it. That is what the bridge is for.
 
 `mimir_agent/steward_bridge.py`, a daemon thread in the Mimir process.
 
-- **Out:** every `STEWARD_POLL_SECONDS` it asks Norns for steward runs with
-  status `waiting`, and posts any question not already in Slack. The
+- **Out:** every `STEWARD_POLL_SECONDS` it asks Norns for **every** run with
+  status `waiting`, and posts any question not already in Slack. Not just the
+  steward's: a coder it hands work to parks the same way on a permission
+  prompt, and a parked run nobody can see is the babysitting this exists to
+  remove. A child's question is posted into its parent's thread, so a
+  permission prompt arrives under the proposal that approved it; the reply
+  then goes to whichever run in that thread is actually waiting, which is the
+  child. A question already parked for more than 24 hours is left alone, so
+  pointing the bridge at a runtime with history does not dump every run that
+  ever parked into the channel. The
   `steward_asks` row — run id, channel, thread — is the record of "already
   posted", written *after* Slack accepts the message. Marking a question
   posted that nobody saw is the one failure with no way back, since the run
