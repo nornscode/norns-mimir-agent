@@ -6,29 +6,19 @@ import uuid
 from norns.client import Norns
 
 from mimir_agent import config, db
-from mimir_agent.worker import SYSTEM_PROMPT
-from mimir_agent.tools import all_tools
+from mimir_agent.worker import build_agents
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("mimir_agent")
 
 
 async def run_worker():
-    from norns import Agent
-    agent = Agent(
-        name="mimir-agent",
-        model=config.MODEL,
-        system_prompt=SYSTEM_PROMPT,
-        tools=all_tools,
-        mode="conversation",
-        max_steps=40,
-        context_window=50,
-        on_failure="retry_last_step",
-    )
+    agents = build_agents()
     norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
-    norns._ensure_agent(agent)
+    for agent in agents:
+        norns._ensure_agent(agent)
     wid = f"python-worker-{uuid.uuid4().hex[:8]}"
-    await norns._run_loop(agent, wid)
+    await norns._run_loop(agents, wid)
 
 
 def run_slack():
@@ -38,7 +28,12 @@ def run_slack():
             return
 
         from slack_bolt.adapter.socket_mode import SocketModeHandler
+        from mimir_agent import steward_bridge
         from mimir_agent.slack_bot import app
+
+        # The bridge needs a Slack client and has to exist before the first
+        # message arrives, so the handler can route steward answers.
+        steward_bridge.start(app.client)
 
         logger.info("Starting Slack bot")
         handler = SocketModeHandler(app, config.SLACK_APP_TOKEN)

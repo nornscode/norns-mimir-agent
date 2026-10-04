@@ -6,7 +6,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from norns import NornsClient
 
-from mimir_agent import config
+from mimir_agent import config, steward_bridge
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("mimir_agent.slack")
@@ -382,6 +382,24 @@ def _handle(body, say, client):
 
     if not user_text:
         return
+
+    # A reply in a thread the steward asked a question in is an answer to a
+    # parked run, not a question for Mimir. It has to be checked before the
+    # project prefix is added and before send_message, which would start a
+    # second, unrelated run and leave the steward parked forever.
+    steward = steward_bridge.bridge()
+    if steward is not None and event.get("thread_ts"):
+        try:
+            if steward.answer(channel, thread_ts, user_text) is not None:
+                try:
+                    client.reactions_remove(
+                        channel=channel, timestamp=event["ts"], name="thinking_face"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception as e:
+            logger.error(f"steward routing failed, handling as a normal message: {e}")
 
     # If this is a reply in an existing thread, pull in the prior messages so
     # the agent has the full conversation on first invocation. Skipped if the

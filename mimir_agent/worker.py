@@ -94,23 +94,38 @@ run the relevant steps for the new source(s) only.
 """
 
 
-def main():
-    from mimir_agent import db
-    db.init()
-
-    agent = Agent(
+def build_mimir() -> Agent:
+    """Mimir itself. One definition, used by both entry points."""
+    return Agent(
         name="mimir-agent",
         model=config.MODEL,
         system_prompt=SYSTEM_PROMPT,
         tools=all_tools,
+        # Norns offers an agent every tool in the tenant unless it is told
+        # otherwise. Without this, Mimir is offered the coding agent's
+        # `bash` and `write_file` whenever that worker is connected — tools
+        # it has no business being able to call from a Slack thread.
+        allowed_tools=[t.name for t in all_tools],
         mode="conversation",
         max_steps=40,
         context_window=50,
         on_failure="retry_last_step",
     )
 
+
+def build_agents() -> list[Agent]:
+    """Mimir and the steward, served from one connection."""
+    from mimir_agent import steward
+
+    return [build_mimir(), steward.build()]
+
+
+def main():
+    from mimir_agent import db
+    db.init()
+
     norns = Norns(config.NORNS_URL, api_key=config.NORNS_API_KEY)
-    norns.run(agent)
+    norns.run(build_agents())
 
 
 if __name__ == "__main__":

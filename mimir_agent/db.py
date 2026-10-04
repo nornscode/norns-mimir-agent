@@ -150,6 +150,23 @@ def init():
             )
         """)
 
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS steward_asks (
+                run_id BIGINT PRIMARY KEY,
+                channel TEXT NOT NULL,
+                thread_ts TEXT NOT NULL,
+                question TEXT NOT NULL,
+                posted_at TIMESTAMPTZ DEFAULT NOW(),
+                answered_at TIMESTAMPTZ,
+                reported_at TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS steward_asks_thread_idx
+            ON steward_asks (channel, thread_ts)
+        """)
+
     _backfill_embeddings()
     _seed_default_sources()
     _seed_sources_from_config()
@@ -428,3 +445,95 @@ def list_projects() -> list[tuple[str, str | None]]:
     with conn.cursor() as cur:
         cur.execute("SELECT name, channel_id FROM projects ORDER BY name")
         return cur.fetchall()
+
+
+# --- The steward's open questions ---------------------------------------
+#
+# One row per parked run: which Slack thread carries its question, so a
+# reply in that thread can be routed back to that run. The row is the
+# record of "already posted", which is what keeps the poller from posting
+# the same proposal every twenty seconds.
+
+
+def record_steward_ask(run_id: int, channel: str, thread_ts: str, question: str) -> bool:
+    """Claim a run as posted. False if it was already claimed, which is how
+    two pollers racing on the same run resolve to one Slack message."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO steward_asks (run_id, channel, thread_ts, question)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (run_id) DO NOTHING
+            """,
+            (run_id, channel, thread_ts, question),
+        )
+        return cur.rowcount > 0
+
+
+def steward_ask_posted(run_id: int) -> bool:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM steward_asks WHERE run_id = %s", (run_id,))
+        return cur.fetchone() is not None
+
+
+def steward_run_for_thread(channel: str, thread_ts: str) -> int | None:
+    """The run waiting on this Slack thread, if any. Unanswered rows win:
+    a thread may carry several questions from one run over its life."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT run_id FROM steward_asks
+            WHERE channel = %s AND thread_ts = %s
+            ORDER BY answered_at NULLS FIRST, posted_at DESC
+            LIMIT 1
+            """,
+            (channel, thread_ts),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def mark_steward_ask_answered(run_id: int) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE steward_asks SET answered_at = NOW() WHERE run_id = %s", (run_id,)
+        )
+
+
+def forget_steward_ask(run_id: int) -> None:
+    """Drop the claim so the question can be posted again — used when the
+    Slack post succeeded but the row could not be written, and the reverse."""
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM steward_asks WHERE run_id = %s", (run_id,))
+
+
+def steward_asks_awaiting_report() -> list[tuple[int, str, str]]:
+    """Runs that were answered and whose outcome has not been posted back.
+
+    This is how the loop closes without anyone watching it: the run carries
+    on in Norns after the answer, and the next poll that finds it finished
+    reports into the thread the question came from.
+    """
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT run_id, channel, thread_ts FROM steward_asks
+            WHERE answered_at IS NOT NULL AND reported_at IS NULL
+            ORDER BY answered_at
+            """
+        )
+        return cur.fetchall()
+
+
+def mark_steward_ask_reported(run_id: int) -> None:
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE steward_asks SET reported_at = NOW() WHERE run_id = %s", (run_id,)
+        )

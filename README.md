@@ -92,6 +92,7 @@ Fill in:
 | `GITHUB_TOKEN` | optional | <https://github.com/settings/tokens> — only needed for private repos or higher rate limits. Public repos work without it. |
 | `FIGMA_TOKEN` | optional | <https://www.figma.com/settings> → Personal access tokens. Required to register Figma files as sources. |
 | `DATABASE_URL` | optional | Defaults to the Postgres in `docker-compose.yml` |
+| `STEWARD_SLACK_CHANNEL` | optional | Channel id for the steward's daily proposals. Unset disables the steward — see [`docs/steward.md`](docs/steward.md). |
 
 ### 4) Start
 
@@ -148,9 +149,24 @@ Slack ──► NornsClient ──► Norns server ──► Mimir worker (this 
 
 Conversations are keyed by Slack channel + thread, so each thread is its own context. If the worker crashes mid-tool-call, Norns replays the run on the next worker that connects.
 
+The same worker also serves **the steward** — a second agent that surveys the Norns repos on a cron schedule, posts one proposal into Slack, and parks until you answer:
+
+```
+cron trigger ──► norns-steward ──► GitHub API + memory
+                      │ ask_human
+                      ▼
+            run parks in Norns ◄──► Slack thread (the bridge)
+                      │ approved
+                      ▼
+            launch_agent ──► the coding agent, on a gard
+```
+
+The steward holds no write tools, and the wait belongs to Norns rather than to this process — so a redeploy mid-wait loses nothing, and answering tomorrow resumes the same run. [`docs/steward.md`](docs/steward.md) has the reasoning and the trigger setup.
+
 ## Docs
 
 - [`docs/design.md`](docs/design.md) — architecture, runtime model, tool surface
+- [`docs/steward.md`](docs/steward.md) — the daily planning agent, the approval gate, and the handoff to the coder
 - [`docs/deploy-fly.md`](docs/deploy-fly.md) — reference deploy on Fly.io
 
 ## License

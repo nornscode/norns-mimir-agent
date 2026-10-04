@@ -7,6 +7,7 @@ from mimir_agent.tools.github import (
     read_github_pr,
     search_github,
 )
+from mimir_agent.tools.issues import list_github_issues, read_github_issue
 from mimir_agent.tools.memory import remember, reset_memory, search_memory
 from mimir_agent.tools.projects import list_projects, set_channel_project
 from mimir_agent.tools.release_notes import draft_release_notes
@@ -28,6 +29,8 @@ all_tools = [
     list_github_prs,
     read_github_pr,
     list_github_branches,
+    list_github_issues,
+    read_github_issue,
     draft_release_notes,
     read_url,
     read_figma_file,
