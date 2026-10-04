@@ -106,7 +106,7 @@ nornsctl triggers create \
   --agent "$STEWARD_ID" \
   --name steward-daily \
   --cron '0 13 * * 1-5' \
-  --message 'This is a planning run. Survey the Norns repos and put one decision-ready proposal in front of me, following your planning-run instructions.'
+  --message 'This is a planning run. Survey the Norns repos and put one decision-ready proposal in front of me, following your planning-run instructions. Use the current date from your system prompt for memory keys.'
 
 # Weekly narrative run, Monday 14:00 UTC
 nornsctl triggers create \

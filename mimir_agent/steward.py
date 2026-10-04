@@ -216,7 +216,7 @@ def build(model: str | None = None):
 PLAN_MESSAGE = (
     "This is a planning run. Survey the Norns repos and put one "
     "decision-ready proposal in front of me, following your planning-run "
-    "instructions. Today's date is in your run metadata; use it for memory keys."
+    "instructions. Use the current date from your system prompt for memory keys."
 )
 
 NARRATIVE_MESSAGE = (
