@@ -207,9 +207,15 @@ class StewardBridge:
     def answer(self, channel: str, thread_ts: str, text: str) -> int | None:
         """Route a thread reply to the run waiting on it.
 
-        Returns the run id if the reply was delivered, None if this thread
-        belongs to no steward question — in which case the caller should
-        handle the message normally.
+        Returns the run id if this thread belongs to a parked question —
+        whether or not the answer could be delivered — and None only when
+        the thread is not one of ours, which is the single case where the
+        caller should go on and handle the message normally.
+
+        The distinction matters: a reply in one of our threads is an answer
+        to an agent, not a question for Mimir. Falling through on a run that
+        has already finished let Mimir answer an approval and claim it had
+        acted on it, which it has no way to do.
         """
         try:
             run_id = db.steward_run_for_thread(channel, thread_ts)
@@ -223,20 +229,21 @@ class StewardBridge:
             run = self.norns.get_run(run_id)
         except Exception as e:
             logger.warning(f"could not read steward run {run_id}: {e}")
-            return None
+            self._say(channel, thread_ts, f"I couldn't read run `{run_id}` to answer it: {e}")
+            return run_id
 
         if not run.is_waiting:
             # Answered already, or it moved on. Say so rather than silently
             # dropping what the user typed.
             self._say(channel, thread_ts, f"Run `{run_id}` isn't waiting on an answer ({run.status}).")
-            return None
+            return run_id
 
         try:
             self.norns.reply(run_id, text)
         except Exception as e:
             logger.error(f"could not deliver answer to run {run_id}: {e}")
             self._say(channel, thread_ts, f"I couldn't deliver that to run `{run_id}`: {e}")
-            return None
+            return run_id
 
         try:
             db.mark_steward_ask_answered(run_id)

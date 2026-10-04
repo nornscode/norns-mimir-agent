@@ -296,7 +296,9 @@ class TestAnswer:
         channel, ts = self._park(bridge, norns)
         norns.get_run.return_value = fake_run(42, "running")
 
-        assert bridge.answer(channel, ts, "do A") is None
+        # Still ours, so the caller must not fall through: Mimir answering an
+        # approval and claiming it acted on it is worse than no answer.
+        assert bridge.answer(channel, ts, "do A") == 42
         norns.reply.assert_not_called()
         assert "isn't waiting" in slack.chat_postMessage.call_args.kwargs["text"]
 
@@ -305,9 +307,20 @@ class TestAnswer:
         norns.get_run.return_value = fake_run(42, "waiting", question="Ship A or B?")
         norns.reply.side_effect = RuntimeError("boom")
 
-        assert bridge.answer(channel, ts, "do A") is None
+        assert bridge.answer(channel, ts, "do A") == 42
         assert asks.rows[42]["answered"] is False
         assert "couldn't deliver" in slack.chat_postMessage.call_args.kwargs["text"]
+
+    def test_an_unreadable_run_still_claims_its_thread(self, bridge, slack, norns, asks):
+        channel, ts = self._park(bridge, norns)
+        norns.get_run.side_effect = RuntimeError("norns down")
+
+        assert bridge.answer(channel, ts, "do A") == 42
+        assert "couldn't read" in slack.chat_postMessage.call_args.kwargs["text"]
+
+    def test_a_thread_we_do_not_own_falls_through(self, bridge, slack, norns, asks):
+        # The one case the caller may handle normally.
+        assert bridge.answer("C_STEWARD", "9999.0001", "hello Mimir") is None
 
 
 # --- outbound: the outcome ----------------------------------------------
