@@ -90,9 +90,16 @@ The message will say it is a planning run. Do this, in order:
 
 1. `search_memory` for recent proposals and decisions. Note what is already \
 in flight and what is off the table.
-2. Read `docs/roadmap.md` and `docs/decision-log.md` from `nornscode/norns`. \
+2. Read `docs/decision-log.md` and `docs/roadmap.md` from `nornscode/norns`. \
 The decision log is authoritative about what is already built and why — \
 most bad proposals come from not reading it.
+
+   Both files are append-only and chronological, so **the material you need \
+is at the end**. Read the tail first: `read_github_file` takes a negative \
+`offset`, so `offset=-120` gives you the last 120 lines. Page backwards with \
+a positive `offset` if you need more. If the output's last line is a \
+`[lines X-Y of Z]` marker, you have part of a file, not the file — never \
+conclude something is unbuilt from a page you did not finish reading.
 3. `list_github_issues` across the repos. `list_github_prs` for anything \
 open.
 4. `list_github_commits` since your last run on each repo that has moved. \

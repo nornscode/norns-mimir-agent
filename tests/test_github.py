@@ -141,11 +141,12 @@ class TestReadGithubFile:
         assert "src/utils" in result
         assert "dir:" in result
 
-    def test_truncates_large_files(self, monkeypatch):
+    def _read(self, monkeypatch, body: bytes, **kwargs) -> str:
         monkeypatch.setattr("mimir_agent.config.GITHUB_TOKEN", "fake-token")
 
         mock_content = MagicMock()
-        mock_content.decoded_content = b"x" * 10000
+        mock_content.decoded_content = body
+        type(mock_content).type = PropertyMock(return_value="file")
 
         mock_repo = MagicMock()
         mock_repo.get_contents.return_value = mock_content
@@ -155,9 +156,33 @@ class TestReadGithubFile:
 
         with patch("mimir_agent.tools.github.Github", return_value=mock_github):
             from mimir_agent.tools.github import read_github_file
-            result = read_github_file.handler("owner/repo", "big.txt")
+            return read_github_file.handler("owner/repo", "big.txt", **kwargs)
 
-        assert "truncated" in result
+    def test_a_file_over_the_ceiling_says_where_to_continue(self, monkeypatch):
+        """It used to cut at 8KB and say only "truncated", with no way to ask
+        for the rest — so a 30KB decision log arrived as its first quarter."""
+        body = ("\n".join("x" * 500 for _ in range(200))).encode()
+        result = self._read(monkeypatch, body)
+
+        assert "continue with offset=" in result.splitlines()[-1]
+
+    def test_a_file_the_old_limit_would_have_cut_now_arrives_whole(self, monkeypatch):
+        body = ("\n".join(f"line {i}" for i in range(1, 1500))).encode()
+        result = self._read(monkeypatch, body)
+
+        assert "line 1499" in result
+        assert not result.splitlines()[-1].startswith("[")
+
+    def test_the_tail_is_reachable_in_one_call(self, monkeypatch):
+        body = ("\n".join(f"line {i}" for i in range(1, 401))).encode()
+        result = self._read(monkeypatch, body, offset=-3)
+
+        body_lines = [l for l in result.splitlines() if not l.startswith("[")]
+        assert body_lines == ["line 398", "line 399", "line 400"]
+
+    def test_non_utf8_content_is_reported_not_raised(self, monkeypatch):
+        result = self._read(monkeypatch, b"\xff\xfe\x00binary")
+        assert "not UTF-8" in result
 
 
 class TestListGithubCommits:
@@ -196,3 +221,78 @@ class TestListGithubCommits:
             result = list_github_commits.handler("owner/repo", since="not-a-date")
 
         assert "Invalid date" in result
+
+
+# --- Paging a file ---------------------------------------------------------
+#
+# read_github_file used to cut at 8000 bytes with no way to ask for the rest,
+# which read the first quarter of a 30KB chronological decision log and
+# reported it as the file. These pin the paging that replaced it.
+
+
+class TestPage:
+    def _text(self, n: int) -> str:
+        return "\n".join(f"line {i}" for i in range(1, n + 1))
+
+    def test_a_short_file_comes_back_whole_with_no_footer(self):
+        from mimir_agent.tools.github import _page
+
+        out = _page(self._text(5), 1, 0)
+        assert out == "line 1\nline 2\nline 3\nline 4\nline 5"
+
+    def test_a_limit_says_where_to_continue(self):
+        from mimir_agent.tools.github import _page
+
+        out = _page(self._text(100), 1, 10)
+        assert out.startswith("line 1\n")
+        assert out.splitlines()[-1] == "[lines 1-10 of 100; continue with offset=11]"
+
+    def test_continuing_from_the_offset_returns_the_next_page(self):
+        from mimir_agent.tools.github import _page
+
+        out = _page(self._text(100), 11, 10)
+        assert out.splitlines()[0] == "line 11"
+        assert "[lines 11-20 of 100; continue with offset=21" in out
+
+    def test_a_negative_offset_reads_the_tail(self):
+        """The decision log appends, so the recent material is at the end."""
+        from mimir_agent.tools.github import _page
+
+        out = _page(self._text(100), -3, 0)
+        body = [l for l in out.splitlines() if not l.startswith("[")]
+        assert body == ["line 98", "line 99", "line 100"]
+        assert "earlier lines at offset=1" in out.splitlines()[-1]
+
+    def test_a_negative_offset_larger_than_the_file_starts_at_the_top(self):
+        from mimir_agent.tools.github import _page
+
+        out = _page(self._text(3), -99, 0)
+        assert out == "line 1\nline 2\nline 3"
+
+    def test_an_offset_past_the_end_says_so(self):
+        from mimir_agent.tools.github import _page
+
+        assert _page(self._text(10), 99, 0) == "(offset 99 is past the end; the file has 10 lines)"
+
+    def test_an_empty_file_is_not_an_error(self):
+        from mimir_agent.tools.github import _page
+
+        assert _page("", 1, 0) == "(empty file)"
+
+    def test_the_output_ceiling_is_enforced_and_reported(self):
+        from mimir_agent.tools import github
+
+        # Lines long enough that the ceiling bites before the line count does.
+        text = "\n".join("x" * 1000 for _ in range(200))
+        out = github._page(text, 1, 0)
+        assert len(out) <= github.MAX_READ_CHARS + 200
+        assert "continue with offset=" in out.splitlines()[-1]
+
+    def test_a_whole_decision_log_sized_file_fits_in_one_call(self):
+        """The case that motivated this: 30KB arriving complete, not quartered."""
+        from mimir_agent.tools import github
+
+        text = self._text(1200)  # ~10KB
+        out = github._page(text, 1, 0)
+        assert "line 1200" in out
+        assert not out.splitlines()[-1].startswith("[")
