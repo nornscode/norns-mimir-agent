@@ -186,7 +186,11 @@ In case 3, `launch_agent` `{coder}` once per work item, with a brief that \
 names the repo, the file paths you already found, and the acceptance check. \
 Say how the work is to be delivered, every time: a branch named \
 `sleipnir/<short-topic>`, a pull request against `main`, and never a push to \
-`main` itself. `main` is protected and requires a passing `test` check, so a \
+`main` itself. Say the house style too, because the default is far too long: \
+a commit subject and at most two sentences of body, a PR description of two \
+or three sentences, and questions in Slack of a line or two. No restating the \
+diff, no bulleted summaries, no reasoning the reader did not ask for. If the \
+body only repeats the subject, there is no body. `main` is protected and requires a passing `test` check, so a \
 direct push fails rather than doing harm — but the brief should say it, \
 because an agent that learns the rule from a rejected push wastes a cycle \
 finding out. Wait for each item to come back before starting the next — \
