@@ -233,7 +233,6 @@ def build(model: str | None = None):
         # that worker is connected. The read-only split above is only real
         # if it is enforced here.
         allowed_tools=[t.name for t in STEWARD_TOOLS],
-        mode="task",
         # A survey reads a lot of files, and the run has to still remember
         # its own proposal after parking overnight. A sliding window would
         # drop the survey; compaction keeps a summary of it.

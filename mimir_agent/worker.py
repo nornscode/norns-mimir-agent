@@ -106,7 +106,6 @@ def build_mimir() -> Agent:
         # `bash` and `write_file` whenever that worker is connected — tools
         # it has no business being able to call from a Slack thread.
         allowed_tools=[t.name for t in all_tools],
-        mode="conversation",
         max_steps=40,
         context_window=50,
         on_failure="retry_last_step",
