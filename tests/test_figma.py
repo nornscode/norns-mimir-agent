@@ -240,6 +240,7 @@ class TestConnectSourceFigma:
             result = connect_source.handler(
                 "figma_file",
                 "https://www.figma.com/file/aBcD1234EFgh5678/Spec",
+                project="design",
             )
 
         assert "Connected" in result
@@ -254,3 +255,5 @@ class TestConnectSourceFigma:
         remember_kwargs = mock_remember.handler.call_args.kwargs
         assert remember_kwargs["key"] == "figma:aBcD1234EFgh5678"
         assert "ingested body" in remember_kwargs["content"]
+        # ...under the project the source was connected to
+        assert remember_kwargs["project"] == "design"

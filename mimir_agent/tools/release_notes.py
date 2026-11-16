@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 
 from norns import tool
 
-from mimir_agent import config
 from mimir_agent.tools.github import _get_client
 
 logger = logging.getLogger(__name__)
@@ -20,9 +19,6 @@ def draft_release_notes(repo: str, since: str, until: str = "") -> str:
         since: Start date in YYYY-MM-DD format
         until: End date in YYYY-MM-DD format (defaults to today)
     """
-    if not config.GITHUB_TOKEN:
-        return "GitHub is not configured. Set GITHUB_TOKEN."
-
     try:
         since_dt = datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
@@ -42,15 +38,20 @@ def draft_release_notes(repo: str, since: str, until: str = "") -> str:
     except Exception as e:
         return f"Could not access repo '{repo}': {e}"
 
-    # Gather merged PRs
+    # Gather merged PRs. The list is ordered by last update, not by merge
+    # date, so an old PR that was commented on recently can come first; only
+    # a PR last *updated* before the window means everything after it is
+    # out of range too (a PR is always updated at or after its merge).
     pr_lines = []
     pulls = repository.get_pulls(state="closed", sort="updated", direction="desc")
     for pr in pulls:
+        if pr.updated_at is not None and pr.updated_at.replace(tzinfo=timezone.utc) < since_dt:
+            break
         if pr.merged_at is None:
             continue
         merged = pr.merged_at.replace(tzinfo=timezone.utc)
         if merged < since_dt:
-            break
+            continue
         if merged > until_dt:
             continue
         labels = ", ".join(l.name for l in pr.labels) if pr.labels else "none"

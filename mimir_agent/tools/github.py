@@ -126,7 +126,14 @@ def _page(text: str, offset: int, limit: int) -> str:
     for i, line in enumerate(lines[start:end]):
         used += len(line) + 1
         if used > MAX_READ_CHARS:
-            end = start + i
+            if i == 0:
+                # A single line over the ceiling (minified JS, a lockfile)
+                # would otherwise come back empty and point at itself as the
+                # place to continue, so the caller could never get past it.
+                out.append(line[:MAX_READ_CHARS] + " … (line truncated)")
+                end = start + 1
+            else:
+                end = start + i
             break
         out.append(line)
 

@@ -73,6 +73,19 @@ class TestConnectSource:
         assert "Connected" in result
 
 
+    def test_url_ingest_stores_in_the_sources_project(self):
+        with (
+            patch("mimir_agent.tools.web._fetch_one", return_value="hello world"),
+            patch("mimir_agent.tools.memory.remember") as mock_remember,
+            patch("mimir_agent.tools.sources.db") as mock_db,
+        ):
+            mock_db.add_source.return_value = True
+            from mimir_agent.tools.sources import connect_source
+            connect_source.handler("url", "https://example.com/docs", project="missive")
+
+        assert mock_remember.handler.call_args.kwargs["project"] == "missive"
+
+
 class TestListSourcesTool:
     def test_groups_defaults_and_user(self):
         fake_rows = [

@@ -439,16 +439,37 @@ def memory_count() -> int:
 
 def set_channel_project(channel_id: str, project_name: str) -> None:
     """Map a Slack channel to a project. Creates the project if needed."""
-    conn = _get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO projects (name, channel_id)
-            VALUES (%s, %s)
-            ON CONFLICT (name) DO UPDATE SET channel_id = %s
-            """,
-            (project_name, channel_id, channel_id),
-        )
+    # The release and the upsert below have to happen as one step, or two
+    # remaps of the same channel interleave and both end up claiming it. The
+    # shared connection is autocommit and other threads' statements land on
+    # it too, so this takes a connection of its own for the transaction. A
+    # transaction alone isn't enough under READ COMMITTED — the second
+    # INSERT waits on the first's uncommitted key and then fails anyway — so
+    # remaps of one channel also queue on an advisory lock until it commits.
+    conn = psycopg2.connect(config.DATABASE_URL)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('mimir:channel:' || %s))",
+                (channel_id,),
+            )
+            # channel_id is UNIQUE, and the upsert below only resolves a clash
+            # on name — so moving a channel to a different project would
+            # violate it. Release the channel from whichever project holds it.
+            cur.execute(
+                "UPDATE projects SET channel_id = NULL WHERE channel_id = %s AND name <> %s",
+                (channel_id, project_name),
+            )
+            cur.execute(
+                """
+                INSERT INTO projects (name, channel_id)
+                VALUES (%s, %s)
+                ON CONFLICT (name) DO UPDATE SET channel_id = %s
+                """,
+                (project_name, channel_id, channel_id),
+            )
+    finally:
+        conn.close()
 
 
 def get_project_for_channel(channel_id: str) -> str | None:
