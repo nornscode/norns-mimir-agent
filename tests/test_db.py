@@ -130,15 +130,22 @@ class TestSetChannelProject:
 
 
 # Needs a real Postgres: set MIMIR_TEST_DATABASE_URL to one you don't mind
-# having its `projects` table dropped. Skipped otherwise.
+# having its `projects` table dropped. Skipped otherwise, unless
+# MIMIR_TEST_REQUIRE_DB is set (as in CI), in which case it fails instead.
 _PG_URL = os.environ.get("MIMIR_TEST_DATABASE_URL")
+_REQUIRE_DB = bool(os.environ.get("MIMIR_TEST_REQUIRE_DB"))
 
 
-@pytest.mark.skipif(not _PG_URL, reason="MIMIR_TEST_DATABASE_URL not set")
+@pytest.mark.skipif(
+    not _PG_URL and not _REQUIRE_DB, reason="MIMIR_TEST_DATABASE_URL not set"
+)
 class TestSetChannelProjectConcurrently:
     @pytest.fixture
     def pg(self, monkeypatch):
         import psycopg2
+
+        if not _PG_URL:
+            pytest.fail("MIMIR_TEST_REQUIRE_DB is set but MIMIR_TEST_DATABASE_URL is not")
 
         from mimir_agent import config, db
 
