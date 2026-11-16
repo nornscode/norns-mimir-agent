@@ -32,6 +32,11 @@ All notable changes to Mimir are documented here. This project adheres to
   serialises statements on a shared connection and every caller takes its
   own cursor, so the connection itself was always safe to share — the race
   was only in creating it.
+- Remapping a Slack channel to another project is atomic. The release from
+  the old project and the upsert into the new one ran as separate autocommit
+  statements, so two remaps of the same channel could interleave and fail on
+  the `channel_id` UNIQUE constraint. They now run as one transaction on a
+  connection of their own, holding a per-channel advisory lock.
 
 ## [0.2.0] - 2026-07-07
 
