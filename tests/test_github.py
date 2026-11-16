@@ -247,6 +247,14 @@ class TestPage:
         assert out.startswith("line 1\n")
         assert out.splitlines()[-1] == "[lines 1-10 of 100; continue with offset=11]"
 
+    def test_a_line_longer_than_the_ceiling_still_makes_progress(self):
+        from mimir_agent.tools.github import MAX_READ_CHARS, _page
+
+        text = "x" * (MAX_READ_CHARS + 10) + "\nline 2"
+        out = _page(text, 1, 0)
+        assert out.startswith("x" * 100)
+        assert out.splitlines()[-1] == "[lines 1-1 of 2; continue with offset=2]"
+
     def test_continuing_from_the_offset_returns_the_next_page(self):
         from mimir_agent.tools.github import _page
 

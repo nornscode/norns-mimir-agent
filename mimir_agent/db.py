@@ -441,6 +441,13 @@ def set_channel_project(channel_id: str, project_name: str) -> None:
     """Map a Slack channel to a project. Creates the project if needed."""
     conn = _get_conn()
     with conn.cursor() as cur:
+        # channel_id is UNIQUE, and the upsert below only resolves a clash on
+        # name — so moving a channel to a different project would violate it.
+        # Release the channel from whichever project holds it first.
+        cur.execute(
+            "UPDATE projects SET channel_id = NULL WHERE channel_id = %s AND name <> %s",
+            (channel_id, project_name),
+        )
         cur.execute(
             """
             INSERT INTO projects (name, channel_id)

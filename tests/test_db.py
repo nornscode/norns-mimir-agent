@@ -81,3 +81,23 @@ class TestSearchMemories:
 
         assert len(results) == 1
         assert mock_cursor.execute.call_count == 2
+
+
+class TestSetChannelProject:
+    def test_remapping_a_channel_releases_it_from_its_old_project(self):
+        """channel_id is UNIQUE and the upsert only handles a clash on name,
+        so the channel has to be cleared from its old project first."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("mimir_agent.db._get_conn", return_value=mock_conn):
+            from mimir_agent.db import set_channel_project
+            set_channel_project("C123", "newproj")
+
+        statements = [c[0][0] for c in mock_cursor.execute.call_args_list]
+        assert len(statements) == 2
+        assert "SET channel_id = NULL" in statements[0]
+        assert mock_cursor.execute.call_args_list[0][0][1] == ("C123", "newproj")
+        assert "INSERT INTO projects" in statements[1]

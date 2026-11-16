@@ -43,7 +43,7 @@ def _validate_github_repo(identifier: str) -> tuple[bool, str]:
         return False, f"Could not reach GitHub: {e}"
 
 
-def _ingest_url(url: str) -> tuple[bool, str]:
+def _ingest_url(url: str, project: str = "default") -> tuple[bool, str]:
     """Fetch a URL and store its content as a memory entry."""
     from mimir_agent.tools.web import _fetch_one
     from mimir_agent.tools.memory import remember
@@ -53,11 +53,11 @@ def _ingest_url(url: str) -> tuple[bool, str]:
         return False, text
 
     # Store as a memory so search_memory can surface it later
-    remember.handler(key=f"url:{url}", content=text)
+    remember.handler(key=f"url:{url}", content=text, project=project)
     return True, ""
 
 
-def _ingest_figma_file(identifier: str) -> tuple[bool, str]:
+def _ingest_figma_file(identifier: str, project: str = "default") -> tuple[bool, str]:
     """Validate access (depth=0), then fetch with depth=2 and store in memory."""
     from mimir_agent.tools.figma import (
         FigmaError,
@@ -81,7 +81,7 @@ def _ingest_figma_file(identifier: str) -> tuple[bool, str]:
         return False, str(e)
 
     text = render_file_summary(payload)
-    remember.handler(key=f"figma:{key}", content=text)
+    remember.handler(key=f"figma:{key}", content=text, project=project)
     return True, ""
 
 
@@ -123,12 +123,12 @@ def connect_source(source_type: str, identifier: str, label: str = "", project: 
         if normalized:
             identifier = normalized
 
-    validators = {
-        "github_repo": _validate_github_repo,
-        "url": _ingest_url,
-        "figma_file": _ingest_figma_file,
-    }
-    ok, err = validators[source_type](identifier)
+    if source_type == "github_repo":
+        ok, err = _validate_github_repo(identifier)
+    elif source_type == "url":
+        ok, err = _ingest_url(identifier, project=project)
+    else:
+        ok, err = _ingest_figma_file(identifier, project=project)
     if not ok:
         return err
 
